@@ -29,6 +29,19 @@ identifiers and values over older Geometry Nodes examples.
   therefore evaluate different frequency ranges on different carrier points.
   DH Audio Analyzer and DH Audio Bands both use this field-driven behavior.
 
+## Shader scalar mapping
+
+- Map Range node identifier: `ShaderNodeMapRange`.
+- With `data_type = "FLOAT"`, the scalar inputs are `Value`, `From Min`,
+  `From Max`, `To Min`, `To Max`, and `Steps`; the scalar output is `Result`.
+- Clamp remains the Boolean RNA property `node.clamp`, not an input socket.
+  A node group that needs a field-linkable or checkbox-controlled clamp must
+  therefore select between unclamped and clamped math explicitly.
+- Blender 5.2's `ShaderNodeMath.operation` includes the identifiers
+  `ABSOLUTE`, `SIGN`, and `POWER`. DH Audio Shader Map combines these as
+  `sign(value) * pow(abs(value), curve)` so unclamped negative values remain
+  defined with fractional response exponents.
+
 ## Runtime menu sockets and group interfaces
 
 Blender 5.2 menu definitions are runtime data. Create a real source node, then

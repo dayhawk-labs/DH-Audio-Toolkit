@@ -3,8 +3,13 @@ import re
 import os
 
 # =====================================================================
-# DH AUDIO TOOLKIT 3.6.0
+# DH AUDIO TOOLKIT 3.7.0
 # Blender 5.2+
+#
+# 3.7.0:
+# - Added DH Audio Shader Map for reusable range mapping, inversion, clamping,
+#   and sign-safe response shaping of amplitude, history, and named-band data.
+# - Clarified required Sound inputs and Material Reader instancer behavior.
 #
 # 3.6.0:
 # - Added DH Audio Radial Spectrum for circular, arc, and spiral layouts.
@@ -67,6 +72,7 @@ import os
 #   SHADER NODE GROUPS
 #   - DH Audio Material Reader
 #   - DH Audio Shader Response
+#   - DH Audio Shader Map
 #
 # Standard spectrum attributes:
 #   dh_audio_amp
@@ -101,7 +107,7 @@ import os
 # - Material Reader can switch between Geometry and Instancer lookup.
 # =====================================================================
 
-TOOLKIT_VERSION = "3.6.0"
+TOOLKIT_VERSION = "3.7.0"
 BLENDER_MIN_VERSION = (5, 2, 0)
 
 REBUILD_EXISTING = True
@@ -131,6 +137,7 @@ GROUP_FILL = "DH Audio Spectrum Fill"
 GROUP_BARS = "DH Audio Spectrum Bars"
 GROUP_MATERIAL_READER = "DH Audio Material Reader"
 GROUP_SHADER_RESPONSE = "DH Audio Shader Response"
+GROUP_SHADER_MAP = "DH Audio Shader Map"
 
 # Stable catalog UUIDs. Keep these unchanged in future releases so users can
 # replace/update the .blend without losing catalog assignments.
@@ -164,6 +171,7 @@ ASSET_CATALOG_PATHS = {
     GROUP_HISTORY: "Geometry Nodes/DH Audio/Visualizers",
     GROUP_MATERIAL_READER: "DH Audio/Shaders",
     GROUP_SHADER_RESPONSE: "DH Audio/Shaders",
+    GROUP_SHADER_MAP: "DH Audio/Shaders",
 }
 
 # Tuned for the visible interface of each public group. Long analyzer-style
@@ -186,6 +194,7 @@ PUBLIC_GROUP_WIDTHS = {
     GROUP_HISTORY: 310,
     GROUP_MATERIAL_READER: 300,
     GROUP_SHADER_RESPONSE: 285,
+    GROUP_SHADER_MAP: 300,
 }
 
 # Internal implementation groups are created for readability but are not
@@ -216,6 +225,7 @@ CANONICAL_GROUPS = [
     GROUP_RADIAL,
     GROUP_MATERIAL_READER,
     GROUP_SHADER_RESPONSE,
+    GROUP_SHADER_MAP,
     INTERNAL_STORE_SPECTRUM,
     INTERNAL_NAMED_MAP,
     INTERNAL_STORE_NAMED_META,
@@ -856,7 +866,10 @@ def add_time_audio_interface(
     new_socket(
         tree, "Sound", "INPUT", "NodeSocketSound",
         parent=parent,
-        description="Sound data-block to analyze",
+        description=(
+            "Required: Sound data-block to analyze. An unassigned Sound produces "
+            "zero amplitude, which is indistinguishable from silent audio inside Geometry Nodes"
+        ),
         structure_type="SINGLE",
     )
 
@@ -1716,9 +1729,175 @@ def create_shader_response_group():
     return tree
 
 
+# =====================================================================
+# 5. DH Audio Shader Map
+# =====================================================================
+
+def create_shader_map_group():
+    """Remap any shader scalar with optional inversion and response shaping."""
+    tree = bpy.data.node_groups.new(GROUP_SHADER_MAP, "ShaderNodeTree")
+    tree["dh_role"] = "shader_map"
+
+    mapping_panel = tree.interface.new_panel(
+        name="Mapping",
+        description="Remap audio, history, or named-band values into a shader-ready range",
+        default_closed=False,
+    )
+
+    new_socket(
+        tree, "Value", "INPUT", "NodeSocketFloat",
+        parent=mapping_panel,
+        default=0.0,
+        description="Value to remap, such as Amplitude or History Position",
+    )
+    new_socket(
+        tree, "From Min", "INPUT", "NodeSocketFloat",
+        parent=mapping_panel,
+        default=0.0,
+        description="Input value that becomes factor 0",
+    )
+    new_socket(
+        tree, "From Max", "INPUT", "NodeSocketFloat",
+        parent=mapping_panel,
+        default=1.0,
+        description="Input value that becomes factor 1; keep greater than From Min",
+    )
+    new_socket(
+        tree, "To Min", "INPUT", "NodeSocketFloat",
+        parent=mapping_panel,
+        default=0.0,
+        description="Output value at factor 0",
+    )
+    new_socket(
+        tree, "To Max", "INPUT", "NodeSocketFloat",
+        parent=mapping_panel,
+        default=1.0,
+        description="Output value at factor 1",
+    )
+    new_socket(
+        tree, "Invert", "INPUT", "NodeSocketBool",
+        parent=mapping_panel,
+        default=False,
+        description="Reverse the normalized factor before shaping",
+    )
+    new_socket(
+        tree, "Clamp", "INPUT", "NodeSocketBool",
+        parent=mapping_panel,
+        default=True,
+        description="Clamp the normalized factor to 0..1 before inversion and shaping",
+    )
+    new_socket(
+        tree, "Curve", "INPUT", "NodeSocketFloat",
+        parent=mapping_panel,
+        default=1.0,
+        min_value=0.01,
+        max_value=10.0,
+        description="Power response: 1 is linear, below 1 rises sooner, above 1 rises later",
+    )
+
+    new_socket(
+        tree, "Value", "OUTPUT", "NodeSocketFloat",
+        description="Final shaped value remapped between To Min and To Max",
+    )
+    new_socket(
+        tree, "Factor", "OUTPUT", "NodeSocketFloat",
+        description="Normalized factor after optional clamp, inversion, and curve shaping",
+    )
+
+    nodes = tree.nodes
+    group_in = nodes.new("NodeGroupInput")
+    group_in.location = (-1050, 100)
+    group_in.width = 220
+
+    group_out = nodes.new("NodeGroupOutput")
+    group_out.location = (1350, 100)
+    group_out.width = 220
+    group_out.is_active_output = True
+
+    frame = make_frame(nodes, "FRAME_SHADER_MAP", "SHADER VALUE MAP", (-720, 430), 1680)
+
+    subtract_min = math_node(nodes, "Subtract From Min", "SUBTRACT", (20, 240), frame, "Value - From Min")
+    input_range = math_node(nodes, "Input Range", "SUBTRACT", (20, 40), frame, "From Max - From Min")
+    safe_range = math_node(nodes, "Safe Input Range", "MAXIMUM", (210, 40), frame, "Range >= epsilon")
+    set_default(safe_range, 1, 0.000001)
+    normalize = math_node(nodes, "Normalize", "DIVIDE", (210, 240), frame, "Normalize Input")
+
+    clamp_low = math_node(nodes, "Clamp Low", "MAXIMUM", (400, 100), frame, "Maximum 0")
+    set_default(clamp_low, 1, 0.0)
+    clamp_high = math_node(nodes, "Clamp High", "MINIMUM", (400, -40), frame, "Minimum 1")
+    set_default(clamp_high, 1, 1.0)
+    clamp_difference = math_node(nodes, "Clamp Difference", "SUBTRACT", (590, -40), frame, "Clamped - Raw")
+    clamp_weight = math_node(nodes, "Clamp Weight", "MULTIPLY", (780, -40), frame, "Difference x Clamp")
+    clamp_select = math_node(nodes, "Clamp Select", "ADD", (780, 180), frame, "Selected Factor")
+
+    one_minus = math_node(nodes, "Invert Factor", "SUBTRACT", (590, 360), frame, "1 - Factor")
+    set_default(one_minus, 0, 1.0)
+    invert_difference = math_node(nodes, "Invert Difference", "SUBTRACT", (780, 360), frame, "Inverted - Factor")
+    invert_weight = math_node(nodes, "Invert Weight", "MULTIPLY", (970, 360), frame, "Difference x Invert")
+    invert_select = math_node(nodes, "Invert Select", "ADD", (970, 180), frame, "Selected Direction")
+
+    absolute = math_node(nodes, "Absolute Factor", "ABSOLUTE", (1160, 300), frame, "Absolute Factor")
+    sign = math_node(nodes, "Factor Sign", "SIGN", (1160, 100), frame, "Preserve Sign")
+    power = math_node(nodes, "Curve Factor", "POWER", (1350, 300), frame, "Absolute ^ Curve")
+    shaped = math_node(nodes, "Restore Sign", "MULTIPLY", (1540, 220), frame, "Signed Shaped Factor")
+
+    output_range = math_node(nodes, "Output Range", "SUBTRACT", (1160, -180), frame, "To Max - To Min")
+    scale_output = math_node(nodes, "Scale Output", "MULTIPLY", (1350, -80), frame, "Factor x Output Range")
+    offset_output = math_node(nodes, "Offset Output", "ADD", (1540, -20), frame, "Add To Min")
+
+    link(tree, group_in, "Value", subtract_min, 0)
+    link(tree, group_in, "From Min", subtract_min, 1)
+    link(tree, group_in, "From Max", input_range, 0)
+    link(tree, group_in, "From Min", input_range, 1)
+    link(tree, input_range, "Value", safe_range, 0)
+    link(tree, subtract_min, "Value", normalize, 0)
+    link(tree, safe_range, "Value", normalize, 1)
+
+    link(tree, normalize, "Value", clamp_low, 0)
+    link(tree, clamp_low, "Value", clamp_high, 0)
+    link(tree, clamp_high, "Value", clamp_difference, 0)
+    link(tree, normalize, "Value", clamp_difference, 1)
+    link(tree, clamp_difference, "Value", clamp_weight, 0)
+    link(tree, group_in, "Clamp", clamp_weight, 1)
+    link(tree, normalize, "Value", clamp_select, 0)
+    link(tree, clamp_weight, "Value", clamp_select, 1)
+
+    link(tree, clamp_select, "Value", one_minus, 1)
+    link(tree, one_minus, "Value", invert_difference, 0)
+    link(tree, clamp_select, "Value", invert_difference, 1)
+    link(tree, invert_difference, "Value", invert_weight, 0)
+    link(tree, group_in, "Invert", invert_weight, 1)
+    link(tree, clamp_select, "Value", invert_select, 0)
+    link(tree, invert_weight, "Value", invert_select, 1)
+
+    link(tree, invert_select, "Value", absolute, 0)
+    link(tree, invert_select, "Value", sign, 0)
+    link(tree, absolute, "Value", power, 0)
+    link(tree, group_in, "Curve", power, 1)
+    link(tree, power, "Value", shaped, 0)
+    link(tree, sign, "Value", shaped, 1)
+
+    link(tree, group_in, "To Max", output_range, 0)
+    link(tree, group_in, "To Min", output_range, 1)
+    link(tree, shaped, "Value", scale_output, 0)
+    link(tree, output_range, "Value", scale_output, 1)
+    link(tree, scale_output, "Value", offset_output, 0)
+    link(tree, group_in, "To Min", offset_output, 1)
+
+    link(tree, offset_output, "Value", group_out, "Value")
+    link(tree, shaped, "Value", group_out, "Factor")
+
+    mark_asset(
+        tree,
+        "Remap, invert, clamp, and shape any DH Audio material value. Useful for "
+        "amplitude thresholds, named-band controls, and Spectrum History fades."
+    )
+    return tree
+
+
 
 # =====================================================================
-# 3. DH Audio Frequency Map
+# 6. DH Audio Frequency Map
 # =====================================================================
 
 def create_frequency_map():
@@ -5287,6 +5466,12 @@ DH Audio Shader Response
     Shader-side equivalent of DH Audio Response with the same Gain/Floor/
     Ceiling/Clamp/Response workflow. Clamp to 1 is a checkbox.
 
+DH Audio Shader Map
+    General shader-side range mapper. It normalizes an input range, optionally
+    clamps and inverts it, applies a sign-safe power curve, and remaps it into
+    a final output range. Use it for amplitude thresholds, named bands, UV
+    controls, and Spectrum History fades.
+
 
 ======================================================================
 ASSET CATALOGS / SHARING
@@ -5675,6 +5860,21 @@ Then optionally:
         -> DH Audio Shader Response
         -> Emission Strength
 
+For general mapping or history fades:
+    DH Audio Material Reader [History Position]
+        -> DH Audio Shader Map [Value]
+        -> Color Ramp / Alpha / Emission Strength
+
+Typical newest-to-oldest fade:
+    From Min = 0
+    From Max = 1
+    Invert   = On
+    Clamp    = On
+    Curve    = 1 to 3
+
+Shader Map also works with Amplitude and named bands. Set To Min / To Max to
+the exact range needed by a UV offset, displacement, mix factor, or emission.
+
 
 ======================================================================
 STANDARD SPECTRUM ATTRIBUTES
@@ -5877,6 +6077,7 @@ def main():
     temporal_response = create_temporal_response_group()
     spectrum_history = create_spectrum_history()
     shader_response = create_shader_response_group()
+    shader_map = create_shader_map_group()
 
     frequency_map = create_frequency_map()
     frequency_selection = create_frequency_selection()
@@ -5932,6 +6133,7 @@ def main():
     print("Shader Node assets:")
     print(f"  - {material_reader.name}")
     print(f"  - {shader_response.name}")
+    print(f"  - {shader_map.name}")
 
     print()
     print("Architecture:")

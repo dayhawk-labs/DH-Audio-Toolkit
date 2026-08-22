@@ -30,7 +30,7 @@ import wave
 import bpy
 
 
-TOOLKIT_VERSION = "3.6.0"
+TOOLKIT_VERSION = "3.7.0"
 
 PUBLIC_GROUPS = {
     "DH Audio Analyzer": ("GeometryNodeTree", 330, "75e799e2-55ce-553a-8fdf-a74c5cf0de2c"),
@@ -50,6 +50,7 @@ PUBLIC_GROUPS = {
     "DH Audio Spectrum Fill": ("GeometryNodeTree", 290, "de47b34b-1184-5bc8-84ac-3c5ada05f601"),
     "DH Audio Material Reader": ("ShaderNodeTree", 300, "1a181044-5483-5a07-ad44-2025bf0459e4"),
     "DH Audio Shader Response": ("ShaderNodeTree", 285, "1a181044-5483-5a07-ad44-2025bf0459e4"),
+    "DH Audio Shader Map": ("ShaderNodeTree", 300, "1a181044-5483-5a07-ad44-2025bf0459e4"),
 }
 
 INTERNAL_GROUPS = {
@@ -140,6 +141,9 @@ EXPECTED_PANELS = {
         "Frequency Metadata": True,
         "Spectrum History": True,
         "Named Bands": False,
+    },
+    "DH Audio Shader Map": {
+        "Mapping": False,
     },
 }
 
@@ -389,7 +393,7 @@ def _audit_interface(report):
     report.check("All internal groups generated", all(bpy.data.node_groups.get(name) for name in INTERNAL_GROUPS))
 
     asset_names = {tree.name for tree in bpy.data.node_groups if tree.asset_data}
-    report.check("Exactly 17 public assets", asset_names == set(PUBLIC_GROUPS), sorted(asset_names))
+    report.check("Exactly 18 public assets", asset_names == set(PUBLIC_GROUPS), sorted(asset_names))
 
     for name, (tree_type, width, catalog) in PUBLIC_GROUPS.items():
         tree = bpy.data.node_groups[name]
@@ -451,6 +455,14 @@ def _audit_interface(report):
         ("DH Audio Shader Response", "Ceiling"): 0.8,
         ("DH Audio Shader Response", "Clamp to 1"): True,
         ("DH Audio Shader Response", "Response"): 0.7,
+        ("DH Audio Material Reader", "Use Instancer"): False,
+        ("DH Audio Shader Map", "From Min"): 0.0,
+        ("DH Audio Shader Map", "From Max"): 1.0,
+        ("DH Audio Shader Map", "To Min"): 0.0,
+        ("DH Audio Shader Map", "To Max"): 1.0,
+        ("DH Audio Shader Map", "Invert"): False,
+        ("DH Audio Shader Map", "Clamp"): True,
+        ("DH Audio Shader Map", "Curve"): 1.0,
     }
     for (group_name, socket_name), expected in defaults.items():
         item = _interface_socket(bpy.data.node_groups[group_name], socket_name)
@@ -477,12 +489,98 @@ def _audit_interface(report):
         ("DH Audio Spectrum Instances", "Realize Instances"),
         ("DH Audio Material Reader", "Use Instancer"),
         ("DH Audio Shader Response", "Clamp to 1"),
+        ("DH Audio Shader Map", "Invert"),
+        ("DH Audio Shader Map", "Clamp"),
         ("DH Audio Spectrum History", "Reset"),
         ("DH Audio Radial Spectrum", "Cyclic"),
     }
     for group_name, socket_name in boolean_inputs:
         item = _interface_socket(bpy.data.node_groups[group_name], socket_name)
         report.check(f"{group_name}: {socket_name} is Boolean", item.socket_type == "NodeSocketBool", item.socket_type)
+
+    for group_name in (
+        "DH Audio Analyzer",
+        "DH Audio Bands",
+        "DH Audio Sample Range",
+        "DH Audio Spectrum Bars",
+    ):
+        sound = _interface_socket(bpy.data.node_groups[group_name], "Sound")
+        report.check(
+            f"{group_name}: Sound is documented as required",
+            "Required" in sound.description and "zero amplitude" in sound.description,
+            sound.description,
+        )
+
+    instancer = _interface_socket(bpy.data.node_groups["DH Audio Material Reader"], "Use Instancer")
+    report.check(
+        "Material Reader explains geometry versus instancer lookup",
+        "realized" in instancer.description and "instancer" in instancer.description,
+        instancer.description,
+    )
+
+
+def _evaluate_shader_math_input(socket, group_values):
+    if socket.is_linked:
+        return _evaluate_shader_math_output(socket.links[0].from_socket, group_values)
+    return float(socket.default_value)
+
+
+def _evaluate_shader_math_output(socket, group_values):
+    node = socket.node
+    if node.type == "GROUP_INPUT":
+        return float(group_values[socket.name])
+    if node.bl_idname != "ShaderNodeMath":
+        raise TypeError(f"Unsupported shader test node: {node.bl_idname}")
+
+    values = [_evaluate_shader_math_input(input_socket, group_values) for input_socket in node.inputs]
+    a = values[0]
+    b = values[1] if len(values) > 1 else 0.0
+    operations = {
+        "ADD": lambda: a + b,
+        "SUBTRACT": lambda: a - b,
+        "MULTIPLY": lambda: a * b,
+        "DIVIDE": lambda: a / b if b != 0.0 else 0.0,
+        "POWER": lambda: math.pow(a, b),
+        "ABSOLUTE": lambda: abs(a),
+        "SIGN": lambda: 1.0 if a > 0.0 else (-1.0 if a < 0.0 else 0.0),
+        "MINIMUM": lambda: min(a, b),
+        "MAXIMUM": lambda: max(a, b),
+    }
+    if node.operation not in operations:
+        raise ValueError(f"Unsupported shader test operation: {node.operation}")
+    return operations[node.operation]()
+
+
+def _test_shader_map(report):
+    tree = bpy.data.node_groups["DH Audio Shader Map"]
+    output = next(node for node in tree.nodes if node.type == "GROUP_OUTPUT" and node.is_active_output)
+    defaults = {
+        "Value": 0.0,
+        "From Min": 0.0,
+        "From Max": 1.0,
+        "To Min": 0.0,
+        "To Max": 1.0,
+        "Invert": 0.0,
+        "Clamp": 1.0,
+        "Curve": 1.0,
+    }
+    cases = [
+        ("linear default", {"Value": 0.25}, 0.25, 0.25),
+        ("invert", {"Value": 0.25, "Invert": 1.0}, 0.75, 0.75),
+        ("curve and output range", {"Value": 0.5, "To Min": 2.0, "To Max": 6.0, "Curve": 2.0}, 3.0, 0.25),
+        ("clamp high", {"Value": 2.0}, 1.0, 1.0),
+        ("sign-safe unclamped curve", {"Value": -0.5, "Clamp": 0.0, "Curve": 2.0}, -0.25, -0.25),
+        ("custom source range", {"Value": 15.0, "From Min": 10.0, "From Max": 20.0}, 0.5, 0.5),
+    ]
+    for label, changes, expected_value, expected_factor in cases:
+        values = defaults | changes
+        actual_value = _evaluate_shader_math_input(_socket(output.inputs, "Value"), values)
+        actual_factor = _evaluate_shader_math_input(_socket(output.inputs, "Factor"), values)
+        report.check(
+            f"Shader Map {label}",
+            abs(actual_value - expected_value) < 1e-6 and abs(actual_factor - expected_factor) < 1e-6,
+            {"value": actual_value, "factor": actual_factor},
+        )
 
 
 def _test_analyzer(report, sound):
@@ -1364,11 +1462,12 @@ def run_validation(repo_root=None, release_path=None, report_path=None):
 
         report.check("Repeated build structural signature", first_signature == second_signature, {"first": first_signature, "second": second_signature})
         report.check("Repeated build catalog bytes", first_catalog == second_catalog, hashlib.sha256(second_catalog).hexdigest())
-        report.check("Exactly 21 generated groups", len([tree for tree in bpy.data.node_groups if tree.name in PUBLIC_GROUPS or tree.name in INTERNAL_GROUPS]) == 21, len(bpy.data.node_groups))
+        report.check("Exactly 22 generated groups", len([tree for tree in bpy.data.node_groups if tree.name in PUBLIC_GROUPS or tree.name in INTERNAL_GROUPS]) == 22, len(bpy.data.node_groups))
         handler_count = sum(1 for handler in bpy.app.handlers.save_post if getattr(handler, "__name__", "") == "_dh_audio_write_catalogs_on_save")
         report.check("Exactly one toolkit save handler", handler_count == 1, handler_count)
 
         report.section("Interface audit completed", lambda: _audit_interface(report))
+        report.section("Shader Map tests completed", lambda: _test_shader_map(report))
 
         _write_test_wav(test_wav)
         sound = bpy.data.sounds.load(str(test_wav), check_existing=False)
@@ -1389,8 +1488,8 @@ def run_validation(repo_root=None, release_path=None, report_path=None):
         release = _clean_release(repo_root, release_path)
         report.observations["release"] = release
         report.check("Release contains no scene objects", release["objects"] == 0, release)
-        report.check("Release contains 21 generated groups", release["node_groups"] == 21, release)
-        report.check("Release contains 17 public assets", release["assets"] == 17, release)
+        report.check("Release contains 22 generated groups", release["node_groups"] == 22, release)
+        report.check("Release contains 18 public assets", release["assets"] == 18, release)
         report.check("Internal groups are not assets", not release["internal_assets"], release["internal_assets"])
         report.check("Release catalog sidecar exists", Path(release["catalog_path"]).is_file(), release["catalog_path"])
         report.check("Release repeat-build is deterministic", release["repeat_build_deterministic"], release)

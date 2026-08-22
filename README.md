@@ -1,4 +1,4 @@
-DH AUDIO TOOLKIT 3.6.0
+DH AUDIO TOOLKIT 3.7.0
 
 Blender 5.2+
 
@@ -203,6 +203,18 @@ DH Audio Shader Response
 &#x20;   Shader-side equivalent of DH Audio Response with the same Gain/Floor/
 
 &#x20;   Ceiling/Clamp/Response workflow. Clamp to 1 is a checkbox.
+
+
+
+DH Audio Shader Map
+
+&#x20;   General shader-side range mapper. It normalizes an input range, optionally
+
+&#x20;   clamps and inverts it, applies a sign-safe power curve, and remaps it into
+
+&#x20;   a final output range. Use it for amplitude, named bands, UV controls, and
+
+&#x20;   Spectrum History fades.
 
 
 
@@ -973,6 +985,30 @@ Then optionally:
 &#x20;       -> DH Audio Shader Response
 
 &#x20;       -> Emission Strength
+
+
+
+For general mapping or history fades:
+
+&#x20;   DH Audio Material Reader \[History Position]
+
+&#x20;       -> DH Audio Shader Map \[Value]
+
+&#x20;       -> Color Ramp / Alpha / Emission Strength
+
+
+
+Typical newest-to-oldest fade:
+
+&#x20;   From Min = 0
+
+&#x20;   From Max = 1
+
+&#x20;   Invert   = On
+
+&#x20;   Clamp    = On
+
+&#x20;   Curve    = 1 to 3
 
 
 
