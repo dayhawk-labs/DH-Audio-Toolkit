@@ -30,7 +30,7 @@ import wave
 import bpy
 
 
-TOOLKIT_VERSION = "3.3.0"
+TOOLKIT_VERSION = "3.4.0"
 
 PUBLIC_GROUPS = {
     "DH Audio Analyzer": ("GeometryNodeTree", 330, "75e799e2-55ce-553a-8fdf-a74c5cf0de2c"),
@@ -40,6 +40,7 @@ PUBLIC_GROUPS = {
     "DH Audio Frequency Selection": ("GeometryNodeTree", 280, "9b46dff4-fa9d-510f-b0ae-a8af6da87e3a"),
     "DH Audio Band Query": ("GeometryNodeTree", 285, "9b46dff4-fa9d-510f-b0ae-a8af6da87e3a"),
     "DH Audio Response": ("GeometryNodeTree", 285, "a4faf3f4-5a13-5f83-ae97-28993f20ac20"),
+    "DH Audio Temporal Response": ("GeometryNodeTree", 310, "75e799e2-55ce-553a-8fdf-a74c5cf0de2c"),
     "DH Audio Spectrum Points": ("GeometryNodeTree", 285, "bb4cca6c-c5d5-52c9-80fb-754adc068f91"),
     "DH Audio Spectrum Bars": ("GeometryNodeTree", 350, "de47b34b-1184-5bc8-84ac-3c5ada05f601"),
     "DH Audio Spectrum Instances": ("GeometryNodeTree", 315, "de47b34b-1184-5bc8-84ac-3c5ada05f601"),
@@ -111,6 +112,11 @@ EXPECTED_PANELS = {
         "Tube": True,
         "Outputs": False,
     },
+    "DH Audio Temporal Response": {
+        "Source": False,
+        "Timing": False,
+        "Outputs": False,
+    },
 }
 
 
@@ -143,7 +149,7 @@ class Report:
 
 
 def _socket(sockets, name):
-    socket = sockets.get(name)
+    socket = sockets[name] if isinstance(name, int) else sockets.get(name)
     if socket is None:
         raise KeyError(f"Socket {name!r} was not found")
     return socket
@@ -359,7 +365,7 @@ def _audit_interface(report):
     report.check("All internal groups generated", all(bpy.data.node_groups.get(name) for name in INTERNAL_GROUPS))
 
     asset_names = {tree.name for tree in bpy.data.node_groups if tree.asset_data}
-    report.check("Exactly 14 public assets", asset_names == set(PUBLIC_GROUPS), sorted(asset_names))
+    report.check("Exactly 15 public assets", asset_names == set(PUBLIC_GROUPS), sorted(asset_names))
 
     for name, (tree_type, width, catalog) in PUBLIC_GROUPS.items():
         tree = bpy.data.node_groups[name]
@@ -403,6 +409,8 @@ def _audit_interface(report):
         ("DH Audio Response", "Ceiling"): 0.8,
         ("DH Audio Response", "Clamp to 1"): True,
         ("DH Audio Response", "Response"): 0.7,
+        ("DH Audio Temporal Response", "Attack"): 0.05,
+        ("DH Audio Temporal Response", "Release"): 0.25,
         ("DH Audio Shader Response", "Gain"): 1.0,
         ("DH Audio Shader Response", "Floor"): 0.0,
         ("DH Audio Shader Response", "Ceiling"): 0.8,
@@ -468,6 +476,128 @@ def _test_analyzer(report, sound):
     report.check("Analyzer custom Time overrides scene frame", custom_peak > peaks[0], {"scene_peak": peaks[0], "custom_peak": custom_peak})
 
     report.observations["analyzer_frames"] = frames
+
+
+def _test_temporal_response(report):
+    tree, _group_in, group_out = _new_geometry_tree("DH Test Temporal Response")
+    line = tree.nodes.new("GeometryNodeMeshLine")
+    line.mode = "OFFSET"
+    _set_input(line, "Count", 1)
+
+    scene_time = tree.nodes.new("GeometryNodeInputSceneTime")
+    after_start = tree.nodes.new("ShaderNodeMath")
+    after_start.operation = "GREATER_THAN"
+    _set_input(after_start, 1, 10.0)
+    before_end = tree.nodes.new("ShaderNodeMath")
+    before_end.operation = "LESS_THAN"
+    _set_input(before_end, 1, 20.0)
+    pulse = tree.nodes.new("ShaderNodeMath")
+    pulse.operation = "MULTIPLY"
+    tree.links.new(_socket(scene_time.outputs, "Frame"), _socket(after_start.inputs, 0))
+    tree.links.new(_socket(scene_time.outputs, "Frame"), _socket(before_end.inputs, 0))
+    tree.links.new(_socket(after_start.outputs, "Value"), _socket(pulse.inputs, 0))
+    tree.links.new(_socket(before_end.outputs, "Value"), _socket(pulse.inputs, 1))
+
+    source = _store_attribute(
+        tree,
+        _socket(line.outputs, "Mesh"),
+        _socket(pulse.outputs, "Value"),
+        "dh_audio_amp",
+    )
+    metadata = tree.nodes.new("GeometryNodeStoreNamedAttribute")
+    metadata.data_type = "INT"
+    metadata.domain = "POINT"
+    _set_input(metadata, "Name", "dh_test_metadata")
+    _set_input(metadata, "Value", 42)
+    tree.links.new(_socket(source.outputs, "Geometry"), _socket(metadata.inputs, "Geometry"))
+
+    temporal = _group_node(tree, "DH Audio Temporal Response")
+    _set_input(temporal, "Attack", 0.1)
+    _set_input(temporal, "Release", 0.4)
+    tree.links.new(_socket(metadata.outputs, "Geometry"), _socket(temporal.inputs, "Spectrum"))
+    output_store = _store_attribute(
+        tree,
+        _socket(temporal.outputs, "Spectrum"),
+        _socket(temporal.outputs, "Amplitude"),
+        "dh_test_temporal_output",
+    )
+    tree.links.new(_socket(output_store.outputs, "Geometry"), _socket(group_out.inputs, "Geometry"))
+
+    obj = _new_host("DH Test Temporal Response Host", tree)
+    values = {}
+    metadata_preserved = True
+    output_field_matches = True
+    for frame in range(1, 31):
+        snapshot = _snapshot(obj, frame)
+        values[frame] = snapshot["attributes"]["dh_audio_amp"][0]
+        metadata_preserved = (
+            metadata_preserved
+            and snapshot["attributes"].get("dh_test_metadata") == [42]
+        )
+        output_field_matches = (
+            output_field_matches
+            and abs(
+                snapshot["attributes"]["dh_test_temporal_output"][0]
+                - values[frame]
+            ) < 1e-6
+        )
+
+    expected_first_rise = 1.0 - math.exp(-(1.0 / 24.0) / 0.1)
+    report.check(
+        "Temporal Response attack follows exponential time constant",
+        (
+            abs(values[11] - expected_first_rise) < 1e-4
+            and values[11] < values[12] < values[19] < 1.0
+        ),
+        {
+            "expected_frame_11": expected_first_rise,
+            "actual_frame_11": values[11],
+            "frame_12": values[12],
+            "frame_19": values[19],
+        },
+    )
+    report.check(
+        "Temporal Response release is slower than attack",
+        0.0 < values[30] < values[20] < values[19],
+        {"frame_19": values[19], "frame_20": values[20], "frame_30": values[30]},
+    )
+    report.check("Temporal Response preserves current metadata", metadata_preserved)
+    report.check("Temporal Response Amplitude output matches stored attribute", output_field_matches)
+
+    sample_previous = bpy.data.node_groups["DH Audio Temporal Response"].nodes.get("Sample Previous Band")
+    report.check(
+        "Temporal Response does not clamp new band indices",
+        sample_previous is not None and sample_previous.bl_idname == "GeometryNodeSampleIndex" and not sample_previous.clamp,
+        None if sample_previous is None else sample_previous.clamp,
+    )
+
+    _set_input(temporal, "Attack", 0.0)
+    _set_input(temporal, "Release", 0.0)
+    zero_values = {}
+    for frame in range(1, 21):
+        zero_values[frame] = _snapshot(obj, frame)["attributes"]["dh_audio_amp"][0]
+    report.check(
+        "Temporal Response zero times are immediate and finite",
+        (
+            zero_values[10] == 0.0
+            and zero_values[11] == 1.0
+            and zero_values[19] == 1.0
+            and zero_values[20] == 0.0
+            and all(math.isfinite(value) for value in zero_values.values())
+        ),
+        {frame: zero_values[frame] for frame in (10, 11, 19, 20)},
+    )
+
+    report.observations["temporal_response"] = {
+        "attack_seconds": 0.1,
+        "release_seconds": 0.4,
+        "frame_11": values[11],
+        "frame_12": values[12],
+        "frame_19": values[19],
+        "frame_20": values[20],
+        "frame_30": values[30],
+        "timeline_requirement": "Play sequentially or bake/cache; an uncached forward jump advances one simulation step.",
+    }
 
 
 def _test_bands(report, sound):
@@ -740,7 +870,7 @@ def run_validation(repo_root=None, release_path=None, report_path=None):
 
         report.check("Repeated build structural signature", first_signature == second_signature, {"first": first_signature, "second": second_signature})
         report.check("Repeated build catalog bytes", first_catalog == second_catalog, hashlib.sha256(second_catalog).hexdigest())
-        report.check("Exactly 18 generated groups", len([tree for tree in bpy.data.node_groups if tree.name in PUBLIC_GROUPS or tree.name in INTERNAL_GROUPS]) == 18, len(bpy.data.node_groups))
+        report.check("Exactly 19 generated groups", len([tree for tree in bpy.data.node_groups if tree.name in PUBLIC_GROUPS or tree.name in INTERNAL_GROUPS]) == 19, len(bpy.data.node_groups))
         handler_count = sum(1 for handler in bpy.app.handlers.save_post if getattr(handler, "__name__", "") == "_dh_audio_write_catalogs_on_save")
         report.check("Exactly one toolkit save handler", handler_count == 1, handler_count)
 
@@ -752,6 +882,7 @@ def run_validation(repo_root=None, release_path=None, report_path=None):
         bpy.context.scene.render.fps_base = 1.0
 
         report.section("Analyzer tests completed", lambda: _test_analyzer(report, sound))
+        report.section("Temporal Response tests completed", lambda: _test_temporal_response(report))
         report.section("Named-band tests completed", lambda: _test_bands(report, sound))
         report.section("Sample Range and Band Query tests completed", lambda: _test_sample_range_and_query(report, sound))
         report.section("Visualizer tests completed", lambda: _test_visualizers(report, sound))
@@ -762,8 +893,8 @@ def run_validation(repo_root=None, release_path=None, report_path=None):
         release = _clean_release(repo_root, release_path)
         report.observations["release"] = release
         report.check("Release contains no scene objects", release["objects"] == 0, release)
-        report.check("Release contains 18 generated groups", release["node_groups"] == 18, release)
-        report.check("Release contains 14 public assets", release["assets"] == 14, release)
+        report.check("Release contains 19 generated groups", release["node_groups"] == 19, release)
+        report.check("Release contains 15 public assets", release["assets"] == 15, release)
         report.check("Internal groups are not assets", not release["internal_assets"], release["internal_assets"])
         report.check("Release catalog sidecar exists", Path(release["catalog_path"]).is_file(), release["catalog_path"])
         report.check("Release repeat-build is deterministic", release["repeat_build_deterministic"], release)

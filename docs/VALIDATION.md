@@ -18,7 +18,7 @@ To create a clean asset-library build after the tests pass:
 & "C:\path\to\Blender 5.2\blender.exe" --background --factory-startup `
   --python tests/blender_52_regression.py -- `
   --report temp/blender_52_report.json `
-  --release "releases/DH Audio Toolkit 3.3.0.blend"
+  --release "releases/DH Audio Toolkit 3.4.0.blend"
 ```
 
 The release file is rebuilt from `src/dh_audio_toolkit.py`; test node groups,
@@ -32,6 +32,8 @@ The suite checks:
   Boolean types, and menu/default values;
 - Analyzer time/channel behavior and spectrum movement across low, mid, and
   high-frequency sections;
+- Temporal Response attack/release timing, zero-time behavior, topology-safe
+  previous-band sampling, and metadata preservation;
 - named bands, Sample Range, and Band Query clamping;
 - Points, Bars, Instances, Curve, and Fill topology and attribute propagation;
 - Audio Radius behavior;

@@ -3,8 +3,14 @@ import re
 import os
 
 # =====================================================================
-# DH AUDIO TOOLKIT 3.3.0
+# DH AUDIO TOOLKIT 3.4.0
 # Blender 5.2+
+#
+# 3.4.0:
+# - Added DH Audio Temporal Response for frame-rate-independent attack/release
+#   smoothing of the standard dh_audio_amp spectrum attribute.
+# - Temporal state follows current carrier topology and initializes newly added
+#   band indices from zero instead of clamping to the previous final band.
 #
 # 3.3.0:
 # - Public Menu Switch inputs now have explicit defaults (Bars = Box, Curve = Smooth).
@@ -33,6 +39,7 @@ import os
 # Creates:
 #   GEOMETRY NODE GROUPS
 #   - DH Audio Response
+#   - DH Audio Temporal Response
 #   - DH Audio Frequency Map
 #   - DH Audio Frequency Selection
 #   - DH Audio Analyzer
@@ -78,7 +85,7 @@ import os
 # - Material Reader can switch between Geometry and Instancer lookup.
 # =====================================================================
 
-TOOLKIT_VERSION = "3.3.0"
+TOOLKIT_VERSION = "3.4.0"
 BLENDER_MIN_VERSION = (5, 2, 0)
 
 REBUILD_EXISTING = True
@@ -92,6 +99,7 @@ README_TEXT_NAME = "DH Audio Toolkit - README"
 REMOVE_LEGACY_GROUPS = False
 
 GROUP_RESPONSE = "DH Audio Response"
+GROUP_TEMPORAL = "DH Audio Temporal Response"
 GROUP_FREQ_MAP = "DH Audio Frequency Map"
 GROUP_FREQ_SELECT = "DH Audio Frequency Selection"
 GROUP_ANALYZER = "DH Audio Analyzer"
@@ -133,6 +141,7 @@ ASSET_CATALOG_PATHS = {
     GROUP_FILL: "Geometry Nodes/DH Audio/Visualizers",
     GROUP_INSTANCES: "Geometry Nodes/DH Audio/Visualizers",
     GROUP_RESPONSE: "Geometry Nodes/DH Audio/Utilities",
+    GROUP_TEMPORAL: "Geometry Nodes/DH Audio/Analysis",
     GROUP_MATERIAL_READER: "DH Audio/Shaders",
     GROUP_SHADER_RESPONSE: "DH Audio/Shaders",
 }
@@ -152,6 +161,7 @@ PUBLIC_GROUP_WIDTHS = {
     GROUP_FILL: 290,
     GROUP_INSTANCES: 315,
     GROUP_RESPONSE: 285,
+    GROUP_TEMPORAL: 310,
     GROUP_MATERIAL_READER: 300,
     GROUP_SHADER_RESPONSE: 285,
 }
@@ -179,6 +189,7 @@ CANONICAL_GROUPS = [
     GROUP_FREQ_SELECT,
     GROUP_FREQ_MAP,
     GROUP_RESPONSE,
+    GROUP_TEMPORAL,
     GROUP_MATERIAL_READER,
     GROUP_SHADER_RESPONSE,
     INTERNAL_STORE_SPECTRUM,
@@ -1100,7 +1111,229 @@ def create_response_group():
 
 
 # =====================================================================
-# 2. DH Audio Shader Response
+# 2. DH Audio Temporal Response
+# =====================================================================
+
+def create_temporal_response_group():
+    """Smooth dh_audio_amp on reusable spectrum carrier geometry over time."""
+    tree = bpy.data.node_groups.new(GROUP_TEMPORAL, "GeometryNodeTree")
+    tree["dh_role"] = "temporal_response"
+
+    source_panel = tree.interface.new_panel(
+        name="Source",
+        description="Spectrum carrier geometry with the standard dh_audio_amp attribute",
+        default_closed=False,
+    )
+    timing_panel = tree.interface.new_panel(
+        name="Timing",
+        description="Frame-rate-independent exponential smoothing times",
+        default_closed=False,
+    )
+    outputs_panel = tree.interface.new_panel(
+        name="Outputs",
+        description="Smoothed spectrum carrier and amplitude field",
+        default_closed=False,
+    )
+
+    new_socket(
+        tree, "Spectrum", "INPUT", "NodeSocketGeometry",
+        parent=source_panel,
+        description=f"Spectrum carrier from {GROUP_ANALYZER}",
+    )
+    new_socket(
+        tree, "Attack", "INPUT", "NodeSocketFloatTimeAbsolute",
+        parent=timing_panel,
+        default=0.05,
+        min_value=0.0,
+        max_value=60.0,
+        description="Seconds to approach rising amplitude. 0 follows rises immediately",
+        structure_type="SINGLE",
+    )
+    new_socket(
+        tree, "Release", "INPUT", "NodeSocketFloatTimeAbsolute",
+        parent=timing_panel,
+        default=0.25,
+        min_value=0.0,
+        max_value=60.0,
+        description="Seconds to approach falling amplitude. 0 follows falls immediately",
+        structure_type="SINGLE",
+    )
+    new_socket(
+        tree, "Spectrum", "OUTPUT", "NodeSocketGeometry",
+        parent=outputs_panel,
+        description="Current spectrum geometry with smoothed dh_audio_amp",
+    )
+    new_socket(
+        tree, "Amplitude", "OUTPUT", "NodeSocketFloat",
+        parent=outputs_panel,
+        description="Smoothed dh_audio_amp field",
+        structure_type="FIELD",
+    )
+
+    nodes = tree.nodes
+    group_in = nodes.new("NodeGroupInput")
+    group_in.name = "Temporal Settings"
+    group_in.location = (-1100, 40)
+    group_in.width = 220
+
+    group_out = nodes.new("NodeGroupOutput")
+    group_out.location = (1180, 40)
+    group_out.width = 240
+    group_out.is_active_output = True
+
+    simulation_in = nodes.new("GeometryNodeSimulationInput")
+    simulation_in.name = "Previous Spectrum State"
+    simulation_in.label = "Previous Frame"
+    simulation_in.location = (-820, 240)
+    simulation_in.width = 210
+
+    simulation_out = nodes.new("GeometryNodeSimulationOutput")
+    simulation_out.name = "Store Spectrum State"
+    simulation_out.label = "Store Current Frame"
+    simulation_out.location = (830, 240)
+    simulation_out.width = 220
+
+    simulation_in.pair_with_output(simulation_out)
+    if len(simulation_out.state_items) != 1:
+        raise RuntimeError(
+            f"{GROUP_TEMPORAL}: expected one default simulation state item, "
+            f"found {len(simulation_out.state_items)}"
+        )
+    state_item = simulation_out.state_items[0]
+    if state_item.socket_type != "GEOMETRY":
+        raise RuntimeError(
+            f"{GROUP_TEMPORAL}: default simulation state is "
+            f"{state_item.socket_type!r}, expected 'GEOMETRY'"
+        )
+    state_item.name = "Spectrum State"
+    state_item.attribute_domain = "POINT"
+
+    link(tree, group_in, "Spectrum", simulation_in, "Spectrum State")
+
+    current_amp = named_attribute_node(
+        nodes, "dh_audio_amp", "FLOAT",
+        location=(-760, -180), label="Current Amplitude",
+    )
+    current_amp.name = "Current Amplitude"
+
+    previous_amp = named_attribute_node(
+        nodes, "dh_audio_amp", "FLOAT",
+        location=(-760, 470), label="Previous Amplitude",
+    )
+    previous_amp.name = "Previous Amplitude"
+
+    index = nodes.new("GeometryNodeInputIndex")
+    index.name = "Current Band Index"
+    index.label = "Current Band Index"
+    index.location = (-760, 650)
+
+    sample_previous = nodes.new("GeometryNodeSampleIndex")
+    sample_previous.name = "Sample Previous Band"
+    sample_previous.label = "Previous Amplitude by Index"
+    sample_previous.data_type = "FLOAT"
+    sample_previous.domain = "POINT"
+    # When band count increases, invalid previous indices must initialize from
+    # zero. Clamping would copy the old final band into every new band.
+    sample_previous.clamp = False
+    sample_previous.location = (-500, 470)
+    sample_previous.width = 240
+
+    link(tree, simulation_in, "Spectrum State", sample_previous, "Geometry")
+    link(tree, previous_amp, "Attribute", sample_previous, "Value")
+    link(tree, index, "Index", sample_previous, "Index")
+
+    rising = nodes.new("FunctionNodeCompare")
+    rising.name = "Amplitude Rising"
+    rising.label = "Current > Previous"
+    rising.data_type = "FLOAT"
+    rising.operation = "GREATER_THAN"
+    rising.location = (-480, -180)
+    link(tree, current_amp, "Attribute", rising, "A")
+    link(tree, sample_previous, "Value", rising, "B")
+
+    time_switch = switch_float_node(
+        nodes, "Attack or Release", (-220, -180), label="Choose Time Constant"
+    )
+    link(tree, rising, "Result", time_switch, "Switch")
+    link(tree, group_in, "Release", time_switch, "False")
+    link(tree, group_in, "Attack", time_switch, "True")
+
+    safe_time = math_node(
+        nodes, "Safe Time Constant", "MAXIMUM", (20, -180), label="Max(Time, epsilon)"
+    )
+    set_default(safe_time, 1, 0.00001)
+    link(tree, time_switch, "Output", safe_time, 0)
+
+    time_ratio = math_node(
+        nodes, "Delta over Time", "DIVIDE", (20, 20), label="Delta Time / Time"
+    )
+    link(tree, simulation_in, "Delta Time", time_ratio, 0)
+    link(tree, safe_time, "Value", time_ratio, 1)
+
+    negative_ratio = math_node(
+        nodes, "Negative Time Ratio", "MULTIPLY", (220, 20), label="-Delta / Time"
+    )
+    set_default(negative_ratio, 1, -1.0)
+    link(tree, time_ratio, "Value", negative_ratio, 0)
+
+    decay = math_node(
+        nodes, "Exponential Decay", "EXPONENT", (420, 20), label="exp(-Delta / Time)"
+    )
+    link(tree, negative_ratio, "Value", decay, 0)
+
+    alpha = math_node(
+        nodes, "Frame Blend", "SUBTRACT", (420, -180), label="1 - Decay"
+    )
+    set_default(alpha, 0, 1.0)
+    link(tree, decay, "Value", alpha, 1)
+
+    amplitude_delta = math_node(
+        nodes, "Amplitude Delta", "SUBTRACT", (-180, 320), label="Current - Previous"
+    )
+    link(tree, current_amp, "Attribute", amplitude_delta, 0)
+    link(tree, sample_previous, "Value", amplitude_delta, 1)
+
+    scaled_delta = math_node(
+        nodes, "Scaled Delta", "MULTIPLY", (80, 320), label="Delta × Frame Blend"
+    )
+    link(tree, amplitude_delta, "Value", scaled_delta, 0)
+    link(tree, alpha, "Value", scaled_delta, 1)
+
+    smoothed = math_node(
+        nodes, "Smoothed Amplitude", "ADD", (320, 320), label="Previous + Scaled Delta"
+    )
+    link(tree, sample_previous, "Value", smoothed, 0)
+    link(tree, scaled_delta, "Value", smoothed, 1)
+
+    store = store_named_attribute_node(
+        nodes, "dh_audio_amp", "FLOAT", "POINT",
+        location=(570, 340), label="Store Smoothed Amplitude",
+    )
+    store.name = "Store Smoothed Amplitude"
+    link(tree, group_in, "Spectrum", store, "Geometry")
+    link(tree, smoothed, "Value", store, "Value")
+    link(tree, store, "Geometry", simulation_out, "Spectrum State")
+
+    output_amp = named_attribute_node(
+        nodes, "dh_audio_amp", "FLOAT",
+        location=(900, -120), label="Smoothed Amplitude",
+    )
+    output_amp.name = "Smoothed Amplitude Output"
+
+    link(tree, simulation_out, "Spectrum State", group_out, "Spectrum")
+    link(tree, output_amp, "Attribute", group_out, "Amplitude")
+
+    mark_asset(
+        tree,
+        "Apply frame-rate-independent attack and release smoothing to "
+        "dh_audio_amp on Analyzer spectrum geometry. Requires sequential "
+        "timeline evaluation or a simulation bake for complete history."
+    )
+    return tree
+
+
+# =====================================================================
+# 3. DH Audio Shader Response
 # =====================================================================
 
 def create_shader_response_group():
@@ -4320,6 +4553,11 @@ DH Audio Response
     optional clamp -> response power curve. Useful for any scalar, not just
     the built-in audio nodes.
 
+DH Audio Temporal Response
+    Stateful attack/release smoothing for Analyzer spectrum geometry. It
+    replaces dh_audio_amp with a frame-rate-independent exponential response
+    while preserving the carrier topology and all other attributes.
+
 DH Audio Material Reader
     Shader helper that reads all standardized spectrum and named-band
     attributes. Use Instancer is a checkbox: Off for real/realized geometry,
@@ -4407,6 +4645,28 @@ This output is the canonical "audio graph as geometry" representation.
 
 It carries the Analyzer attributes with it, so downstream consumers and
 materials still know amplitude, band index, band position, frequency, etc.
+
+
+======================================================================
+RECIPE 2A: ATTACK / RELEASE SMOOTHING
+======================================================================
+
+    DH Audio Analyzer [Spectrum]
+        -> DH Audio Temporal Response [Spectrum]
+        -> DH Audio Spectrum Points / Instances / custom consumers
+
+Defaults:
+    Attack  = 0.05 seconds
+    Release = 0.25 seconds
+
+Temporal Response smooths dh_audio_amp and preserves every other standard
+spectrum attribute. Set either time to 0 for an immediate response in that
+direction.
+
+This group contains a Simulation Zone. Play the timeline sequentially or bake
+the simulation when complete history is required. Jumping directly to an
+uncached future frame advances one simulation step rather than reconstructing
+every skipped frame.
 
 
 ======================================================================
@@ -4698,6 +4958,12 @@ Spectrum interoperability:
     DH Audio Spectrum Points and DH Audio Spectrum Bars intentionally emit
     compatible Spectrum Points. Curve and Fill accept either.
 
+Temporal response:
+    Attack and Release are exponential time constants measured in seconds.
+    The first evaluated frame initializes from the current spectrum. When the
+    band count grows, new indices initialize from zero rather than inheriting
+    the previous final band.
+
 
 ======================================================================
 GOOD NEXT ADDITIONS
@@ -4705,8 +4971,7 @@ GOOD NEXT ADDITIONS
 
 These fit the current architecture without breaking it:
 
-    Temporal Response
-        attack / release
+    Temporal Extensions
         peak hold
         decay
         temporal averaging
@@ -4814,6 +5079,7 @@ def main():
     cleanup_existing()
 
     response = create_response_group()
+    temporal_response = create_temporal_response_group()
     shader_response = create_shader_response_group()
 
     frequency_map = create_frequency_map()
@@ -4848,6 +5114,7 @@ def main():
     print("Geometry Node assets:")
     for group in (
         response,
+        temporal_response,
         frequency_map,
         frequency_selection,
         analyzer,
@@ -4870,6 +5137,7 @@ def main():
     print()
     print("Architecture:")
     print("  Analyzer Spectrum -> Spectrum Points -> Curve / Fill")
+    print("  Analyzer Spectrum -> Temporal Response -> downstream consumers")
     print("  Analyzer Spectrum -> Frequency Selection -> downstream Selection inputs")
     print("  Analyzer Spectrum -> Instances / Band Query")
     print("  Spectrum Bars     -> standalone Analyzer wrapper + compatible Spectrum Points")

@@ -1,4 +1,4 @@
-DH AUDIO TOOLKIT 3.3.0
+DH AUDIO TOOLKIT 3.4.0
 
 Blender 5.2+
 
@@ -155,6 +155,16 @@ DH Audio Response
 &#x20;   optional clamp -> response power curve. Useful for any scalar, not just
 
 &#x20;   the built-in audio nodes.
+
+
+
+DH Audio Temporal Response
+
+&#x20;   Stateful attack/release smoothing for Analyzer spectrum geometry. It
+
+&#x20;   replaces dh\_audio\_amp with a frame-rate-independent exponential response
+
+&#x20;   while preserving the carrier topology and all other attributes.
 
 
 
@@ -331,6 +341,48 @@ This output is the canonical "audio graph as geometry" representation.
 It carries the Analyzer attributes with it, so downstream consumers and
 
 materials still know amplitude, band index, band position, frequency, etc.
+
+
+
+======================================================================
+
+RECIPE 2A: ATTACK / RELEASE SMOOTHING
+
+======================================================================
+
+
+
+&#x20;   DH Audio Analyzer \[Spectrum]
+
+&#x20;       -> DH Audio Temporal Response \[Spectrum]
+
+&#x20;       -> DH Audio Spectrum Points / Instances / custom consumers
+
+
+
+Defaults:
+
+&#x20;   Attack  = 0.05 seconds
+
+&#x20;   Release = 0.25 seconds
+
+
+
+Temporal Response smooths dh\_audio\_amp and preserves every other standard
+
+spectrum attribute. Set either time to 0 for an immediate response in that
+
+direction.
+
+
+
+This group contains a Simulation Zone. Play the timeline sequentially or bake
+
+the simulation when complete history is required. Jumping directly to an
+
+uncached future frame advances one simulation step rather than reconstructing
+
+every skipped frame.
 
 
 
@@ -914,6 +966,18 @@ Spectrum interoperability:
 
 
 
+Temporal response:
+
+&#x20;   Attack and Release are exponential time constants measured in seconds.
+
+&#x20;   The first evaluated frame initializes from the current spectrum. When the
+
+&#x20;   band count grows, new indices initialize from zero rather than inheriting
+
+&#x20;   the previous final band.
+
+
+
 
 
 ======================================================================
@@ -928,9 +992,7 @@ These fit the current architecture without breaking it:
 
 
 
-&#x20;   Temporal Response
-
-&#x20;       attack / release
+&#x20;   Temporal Extensions
 
 &#x20;       peak hold
 

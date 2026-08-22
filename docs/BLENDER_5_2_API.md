@@ -118,6 +118,42 @@ The toolkit's verified defaults are:
   Catmull-Rom baseline undershoot without adding a tube profile that would
   distort the measured minimum Z value.
 
+## Simulation Zones
+
+- Node identifiers:
+  - `GeometryNodeSimulationInput`
+  - `GeometryNodeSimulationOutput`
+- Pair the nodes with `simulation_input.pair_with_output(simulation_output)`.
+- Blender 5.2 exposes the paired node through the read-only
+  `simulation_input.paired_output` pointer. Older examples that inspect an
+  `output_node_id` property do not apply; that property is absent in the
+  tested runtime.
+- Simulation state items are managed through
+  `simulation_output.state_items`. A new output contains one `GEOMETRY` item
+  by default. Items expose `name`, `socket_type`, and `attribute_domain`.
+- Simulation Input exposes `Delta Time`, followed by the paired state outputs.
+  Simulation Output exposes `Skip`, followed by the paired state inputs and
+  outputs.
+- A Simulation Zone works inside a nested reusable Geometry Node group used by
+  a modifier. DH Audio Temporal Response uses this arrangement.
+- Uncached forward timeline jumps advance one simulation step; they do not
+  reconstruct every skipped frame. Sequential playback or a simulation bake
+  is required for complete temporal history.
+- When matching state by band index across changing carrier topology, use
+  `GeometryNodeSampleIndex.clamp = False`. With clamping enabled, newly added
+  bands inherit the previous final band's value. With clamping disabled,
+  invalid previous indices evaluate to zero.
+
+## Node Editor context
+
+- `SpaceNodeEditor` in the tested 5.2 runtime does not expose the older
+  `geometry_nodes_type` property.
+- Relevant properties include `tree_type`, `node_tree_sub_type`, `node_tree`,
+  the read-only `edit_tree`, and `pin`.
+- Setting an area to `NODE_EDITOR`, assigning `area.ui_type =
+  "GeometryNodeTree"`, and making an object with the target Nodes modifier
+  active was sufficient for `edit_tree` to resolve to that geometry group.
+
 ## Mesh Grid indexing
 
 - Node identifier: `GeometryNodeMeshGrid`
