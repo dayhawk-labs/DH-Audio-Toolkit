@@ -3,8 +3,13 @@ import re
 import os
 
 # =====================================================================
-# DH AUDIO TOOLKIT 3.4.0
+# DH AUDIO TOOLKIT 3.5.0
 # Blender 5.2+
+#
+# 3.5.0:
+# - Added DH Audio Spectrum History for bounded simulation-zone waterfall rows.
+# - History preserves spectrum metadata across changing band counts and exposes
+#   standardized age index/position attributes for geometry and materials.
 #
 # 3.4.0:
 # - Added DH Audio Temporal Response for frame-rate-independent attack/release
@@ -40,6 +45,7 @@ import os
 #   GEOMETRY NODE GROUPS
 #   - DH Audio Response
 #   - DH Audio Temporal Response
+#   - DH Audio Spectrum History
 #   - DH Audio Frequency Map
 #   - DH Audio Frequency Selection
 #   - DH Audio Analyzer
@@ -78,6 +84,10 @@ import os
 #   dh_audio_brilliance
 #   dh_audio_air
 #
+# Standard spectrum-history attributes:
+#   dh_audio_history_index
+#   dh_audio_history_pos
+#
 # Notes:
 # - Analyzer spectrum values are stored on the carrier point domain.
 # - Instance on Points propagates those point attributes to instances.
@@ -85,7 +95,7 @@ import os
 # - Material Reader can switch between Geometry and Instancer lookup.
 # =====================================================================
 
-TOOLKIT_VERSION = "3.4.0"
+TOOLKIT_VERSION = "3.5.0"
 BLENDER_MIN_VERSION = (5, 2, 0)
 
 REBUILD_EXISTING = True
@@ -100,6 +110,7 @@ REMOVE_LEGACY_GROUPS = False
 
 GROUP_RESPONSE = "DH Audio Response"
 GROUP_TEMPORAL = "DH Audio Temporal Response"
+GROUP_HISTORY = "DH Audio Spectrum History"
 GROUP_FREQ_MAP = "DH Audio Frequency Map"
 GROUP_FREQ_SELECT = "DH Audio Frequency Selection"
 GROUP_ANALYZER = "DH Audio Analyzer"
@@ -142,6 +153,7 @@ ASSET_CATALOG_PATHS = {
     GROUP_INSTANCES: "Geometry Nodes/DH Audio/Visualizers",
     GROUP_RESPONSE: "Geometry Nodes/DH Audio/Utilities",
     GROUP_TEMPORAL: "Geometry Nodes/DH Audio/Analysis",
+    GROUP_HISTORY: "Geometry Nodes/DH Audio/Visualizers",
     GROUP_MATERIAL_READER: "DH Audio/Shaders",
     GROUP_SHADER_RESPONSE: "DH Audio/Shaders",
 }
@@ -162,6 +174,7 @@ PUBLIC_GROUP_WIDTHS = {
     GROUP_INSTANCES: 315,
     GROUP_RESPONSE: 285,
     GROUP_TEMPORAL: 310,
+    GROUP_HISTORY: 310,
     GROUP_MATERIAL_READER: 300,
     GROUP_SHADER_RESPONSE: 285,
 }
@@ -190,6 +203,7 @@ CANONICAL_GROUPS = [
     GROUP_FREQ_MAP,
     GROUP_RESPONSE,
     GROUP_TEMPORAL,
+    GROUP_HISTORY,
     GROUP_MATERIAL_READER,
     GROUP_SHADER_RESPONSE,
     INTERNAL_STORE_SPECTRUM,
@@ -221,6 +235,11 @@ SPECTRUM_ATTRS = [
     ("Center Frequency", "dh_audio_center_hz",    "FLOAT"),
     ("High Frequency",   "dh_audio_high_hz",      "FLOAT"),
     ("Bandwidth",        "dh_audio_bandwidth_hz", "FLOAT"),
+]
+
+HISTORY_ATTRS = [
+    ("History Index",    "dh_audio_history_index", "INT"),
+    ("History Position", "dh_audio_history_pos",   "FLOAT"),
 ]
 
 NAMED_BAND_ATTRS = [
@@ -1333,7 +1352,270 @@ def create_temporal_response_group():
 
 
 # =====================================================================
-# 3. DH Audio Shader Response
+# 3. DH Audio Spectrum History
+# =====================================================================
+
+def create_spectrum_history():
+    """Accumulate a bounded stack of positioned spectrum rows."""
+    tree = bpy.data.node_groups.new(GROUP_HISTORY, "GeometryNodeTree")
+    tree["dh_role"] = "spectrum_history"
+
+    source_panel = tree.interface.new_panel(
+        name="Source",
+        description="Positioned spectrum geometry to capture each frame",
+        default_closed=False,
+    )
+    history_panel = tree.interface.new_panel(
+        name="History",
+        description="Bounded simulation history and row spacing",
+        default_closed=False,
+    )
+    outputs_panel = tree.interface.new_panel(
+        name="Outputs",
+        description="History geometry and normalized row-age fields",
+        default_closed=False,
+    )
+
+    new_socket(
+        tree, "Spectrum Points", "INPUT", "NodeSocketGeometry",
+        parent=source_panel,
+        description=(
+            f"Positioned spectrum geometry from {GROUP_POINTS} or "
+            f"{GROUP_BARS}"
+        ),
+    )
+    new_socket(
+        tree, "Frames", "INPUT", "NodeSocketInt",
+        parent=history_panel,
+        default=32,
+        min_value=1,
+        max_value=512,
+        description="Maximum number of spectrum rows retained, including the current row",
+        structure_type="SINGLE",
+    )
+    new_socket(
+        tree, "History Offset", "INPUT", "NodeSocketVector",
+        parent=history_panel,
+        default=(0.0, -0.15, 0.0),
+        description="Translation applied once per frame of row age",
+        structure_type="SINGLE",
+    )
+    new_socket(
+        tree, "Reset", "INPUT", "NodeSocketBool",
+        parent=history_panel,
+        default=False,
+        description="Discard previous rows and restart history from the current spectrum",
+        structure_type="SINGLE",
+    )
+    new_socket(
+        tree, "History", "OUTPUT", "NodeSocketGeometry",
+        parent=outputs_panel,
+        description="Current spectrum plus bounded previous rows",
+    )
+    new_socket(
+        tree, "History Index", "OUTPUT", "NodeSocketInt",
+        parent=outputs_panel,
+        description="Row age in frames: current = 0, oldest = Frames - 1",
+        structure_type="FIELD",
+    )
+    new_socket(
+        tree, "History Position", "OUTPUT", "NodeSocketFloat",
+        parent=outputs_panel,
+        description="Normalized row age from 0 at current to 1 at oldest",
+        structure_type="FIELD",
+    )
+
+    nodes = tree.nodes
+    group_in = nodes.new("NodeGroupInput")
+    group_in.name = "History Settings"
+    group_in.location = (-1280, 20)
+    group_in.width = 220
+
+    group_out = nodes.new("NodeGroupOutput")
+    group_out.location = (1260, 20)
+    group_out.width = 240
+    group_out.is_active_output = True
+
+    empty_state = nodes.new("GeometryNodeJoinGeometry")
+    empty_state.name = "Empty Initial History"
+    empty_state.label = "Empty Initial History"
+    empty_state.location = (-1160, 520)
+    empty_state.width = 190
+
+    simulation_in = nodes.new("GeometryNodeSimulationInput")
+    simulation_in.name = "Previous History State"
+    simulation_in.label = "Previous History"
+    simulation_in.location = (-900, 420)
+    simulation_in.width = 210
+
+    simulation_out = nodes.new("GeometryNodeSimulationOutput")
+    simulation_out.name = "Store History State"
+    simulation_out.label = "Store Bounded History"
+    simulation_out.location = (930, 420)
+    simulation_out.width = 230
+
+    simulation_in.pair_with_output(simulation_out)
+    if len(simulation_out.state_items) != 1:
+        raise RuntimeError(
+            f"{GROUP_HISTORY}: expected one default simulation state item, "
+            f"found {len(simulation_out.state_items)}"
+        )
+    state_item = simulation_out.state_items[0]
+    if state_item.socket_type != "GEOMETRY":
+        raise RuntimeError(
+            f"{GROUP_HISTORY}: default simulation state is "
+            f"{state_item.socket_type!r}, expected 'GEOMETRY'"
+        )
+    state_item.name = "History State"
+    state_item.attribute_domain = "POINT"
+    link(tree, empty_state, "Geometry", simulation_in, "History State")
+
+    # Previous rows move once per frame, then receive a new integer age.
+    move_previous = nodes.new("GeometryNodeSetPosition")
+    move_previous.name = "Offset Previous Rows"
+    move_previous.label = "Offset Previous Rows"
+    move_previous.location = (-650, 500)
+    link(tree, simulation_in, "History State", move_previous, "Geometry")
+    link(tree, group_in, "History Offset", move_previous, "Offset")
+
+    previous_index = named_attribute_node(
+        nodes, "dh_audio_history_index", "INT",
+        location=(-650, 760), label="Previous History Index",
+    )
+    previous_index.name = "Previous History Index"
+
+    increment_index = integer_math_node(
+        nodes, "Increment History Index", "ADD", (-400, 760),
+        label="History Index + 1",
+    )
+    set_default(increment_index, 1, 1)
+    link(tree, previous_index, "Attribute", increment_index, 0)
+
+    store_previous_index = store_named_attribute_node(
+        nodes, "dh_audio_history_index", "INT", "POINT",
+        location=(-360, 500), label="Store Incremented Index",
+    )
+    store_previous_index.name = "Store Incremented History Index"
+    link(tree, move_previous, "Geometry", store_previous_index, "Geometry")
+    link(tree, increment_index, "Value", store_previous_index, "Value")
+
+    # Field expressions are evaluated in the context of their consumer's
+    # geometry. Re-read the stored attribute here: reusing increment_index
+    # downstream would increment it a second time after Store Named Attribute.
+    stored_index = named_attribute_node(
+        nodes, "dh_audio_history_index", "INT",
+        location=(-80, 780), label="Stored History Index",
+    )
+    stored_index.name = "Stored History Index"
+
+    frames_minus_one = integer_math_node(
+        nodes, "History Span", "SUBTRACT", (-390, 210),
+        label="Frames - 1",
+    )
+    set_default(frames_minus_one, 1, 1)
+    link(tree, group_in, "Frames", frames_minus_one, 0)
+
+    safe_span = integer_math_node(
+        nodes, "Safe History Span", "MAXIMUM", (-140, 210),
+        label="Max(Frames - 1, 1)",
+    )
+    set_default(safe_span, 1, 1)
+    link(tree, frames_minus_one, "Value", safe_span, 0)
+
+    normalized_age = math_node(
+        nodes, "Normalized History Age", "DIVIDE", (110, 210),
+        label="Index / Safe Span",
+    )
+    link(tree, stored_index, "Attribute", normalized_age, 0)
+    link(tree, safe_span, "Value", normalized_age, 1)
+
+    store_previous_position = store_named_attribute_node(
+        nodes, "dh_audio_history_pos", "FLOAT", "POINT",
+        location=(120, 500), label="Store Normalized Age",
+    )
+    store_previous_position.name = "Store History Position"
+    link(tree, store_previous_index, "Geometry", store_previous_position, "Geometry")
+    link(tree, normalized_age, "Value", store_previous_position, "Value")
+
+    expired = nodes.new("FunctionNodeCompare")
+    expired.name = "Expired History Rows"
+    expired.label = "Index >= Frames"
+    expired.data_type = "INT"
+    expired.operation = "GREATER_EQUAL"
+    expired.location = (160, 770)
+    link(tree, stored_index, "Attribute", expired, "A")
+    link(tree, group_in, "Frames", expired, "B")
+
+    delete_expired = nodes.new("GeometryNodeDeleteGeometry")
+    delete_expired.name = "Delete Expired Rows"
+    delete_expired.label = "Keep Bounded History"
+    delete_expired.domain = "POINT"
+    delete_expired.mode = "ALL"
+    delete_expired.location = (440, 500)
+    delete_expired.width = 210
+    link(tree, store_previous_position, "Geometry", delete_expired, "Geometry")
+    link(tree, expired, "Result", delete_expired, "Selection")
+
+    # The current row always starts at index/position zero.
+    store_current_index = store_named_attribute_node(
+        nodes, "dh_audio_history_index", "INT", "POINT",
+        location=(-520, -250), label="Current Index = 0",
+    )
+    store_current_index.name = "Store Current History Index"
+    set_default(store_current_index, "Value", 0)
+    link(tree, group_in, "Spectrum Points", store_current_index, "Geometry")
+
+    store_current_position = store_named_attribute_node(
+        nodes, "dh_audio_history_pos", "FLOAT", "POINT",
+        location=(-230, -250), label="Current Position = 0",
+    )
+    store_current_position.name = "Store Current History Position"
+    set_default(store_current_position, "Value", 0.0)
+    link(tree, store_current_index, "Geometry", store_current_position, "Geometry")
+
+    join_rows = nodes.new("GeometryNodeJoinGeometry")
+    join_rows.name = "Join History Rows"
+    join_rows.label = "Current + Previous Rows"
+    join_rows.location = (650, 210)
+    join_rows.width = 210
+    link(tree, store_current_position, "Geometry", join_rows, "Geometry")
+    link(tree, delete_expired, "Geometry", join_rows, "Geometry")
+
+    reset_history = switch_geometry_node(
+        nodes, "Reset History", (650, -80), label="Reset to Current Row"
+    )
+    link(tree, group_in, "Reset", reset_history, "Switch")
+    link(tree, join_rows, "Geometry", reset_history, "False")
+    link(tree, store_current_position, "Geometry", reset_history, "True")
+    link(tree, reset_history, "Output", simulation_out, "History State")
+
+    output_index = named_attribute_node(
+        nodes, "dh_audio_history_index", "INT",
+        location=(990, -80), label="History Index Output",
+    )
+    output_index.name = "History Index Output"
+    output_position = named_attribute_node(
+        nodes, "dh_audio_history_pos", "FLOAT",
+        location=(990, -280), label="History Position Output",
+    )
+    output_position.name = "History Position Output"
+
+    link(tree, simulation_out, "History State", group_out, "History")
+    link(tree, output_index, "Attribute", group_out, "History Index")
+    link(tree, output_position, "Attribute", group_out, "History Position")
+
+    mark_asset(
+        tree,
+        "Accumulate positioned spectrum points into a bounded waterfall history. "
+        "Preserves spectrum attributes, supports changing band counts and reset, "
+        "and exposes dh_audio_history_index / dh_audio_history_pos. Requires "
+        "sequential timeline evaluation or a simulation bake for complete history."
+    )
+    return tree
+
+
+# =====================================================================
+# 4. DH Audio Shader Response
 # =====================================================================
 
 def create_shader_response_group():
@@ -3027,6 +3309,11 @@ def create_material_reader():
         description="Detailed spectrum frequency metadata",
         default_closed=True,
     )
+    history_panel = tree.interface.new_panel(
+        name="Spectrum History",
+        description="Row age values written by DH Audio Spectrum History",
+        default_closed=True,
+    )
     named_panel = tree.interface.new_panel(
         name="Named Bands",
         description="Named values written by DH Audio Bands",
@@ -3053,7 +3340,15 @@ def create_material_reader():
             parent=panel,
             description=f"Reads '{attr_name}'",
         )
-        material_outputs.append((output_name, attr_name))
+        material_outputs.append((output_name, attr_name, "spectrum"))
+
+    for output_name, attr_name, _dtype in HISTORY_ATTRS:
+        new_socket(
+            tree, output_name, "OUTPUT", "NodeSocketFloat",
+            parent=history_panel,
+            description=f"Reads '{attr_name}'",
+        )
+        material_outputs.append((output_name, attr_name, "history"))
 
     for output_name, attr_name in NAMED_BAND_ATTRS:
         new_socket(
@@ -3061,7 +3356,7 @@ def create_material_reader():
             parent=named_panel,
             description=f"Reads '{attr_name}'",
         )
-        material_outputs.append((output_name, attr_name))
+        material_outputs.append((output_name, attr_name, "named"))
 
     nodes = tree.nodes
     group_in = nodes.new("NodeGroupInput")
@@ -3073,13 +3368,20 @@ def create_material_reader():
     group_out.width = 250
     group_out.is_active_output = True
 
-    frame_spectrum = make_frame(nodes, "FRAME_SPECTRUM", "SPECTRUM ATTRIBUTE READERS", (-850, 700), 1000)
-    frame_named = make_frame(nodes, "FRAME_NAMED", "NAMED BAND ATTRIBUTE READERS", (-850, -700), 1000)
+    frame_spectrum = make_frame(nodes, "FRAME_SPECTRUM", "SPECTRUM ATTRIBUTE READERS", (-850, 800), 1000)
+    frame_history = make_frame(nodes, "FRAME_HISTORY", "SPECTRUM HISTORY READERS", (-850, -450), 1000)
+    frame_named = make_frame(nodes, "FRAME_NAMED", "NAMED BAND ATTRIBUTE READERS", (-850, -1000), 1000)
+    frames = {
+        "spectrum": frame_spectrum,
+        "history": frame_history,
+        "named": frame_named,
+    }
+    local_indices = {"spectrum": 0, "history": 0, "named": 0}
 
-    for i, (output_name, attr_name) in enumerate(material_outputs):
-        is_named = i >= len(SPECTRUM_ATTRS)
-        local_i = i - len(SPECTRUM_ATTRS) if is_named else i
-        frame = frame_named if is_named else frame_spectrum
+    for output_name, attr_name, category in material_outputs:
+        local_i = local_indices[category]
+        local_indices[category] += 1
+        frame = frames[category]
 
         col = local_i % 3
         row = local_i // 3
@@ -3140,7 +3442,7 @@ def create_material_reader():
 
     mark_asset(
         tree,
-        "Single shader reader for all DH Audio spectrum and named-band attributes. "
+        "Single shader reader for all DH Audio spectrum, spectrum-history, and named-band attributes. "
         "Use Source = 0 for geometry/realized data and Source = 1 for GN instance attributes."
     )
     return tree
@@ -4558,8 +4860,13 @@ DH Audio Temporal Response
     replaces dh_audio_amp with a frame-rate-independent exponential response
     while preserving the carrier topology and all other attributes.
 
+DH Audio Spectrum History
+    Accumulates positioned Spectrum Points into a bounded waterfall stack.
+    Each row keeps its spectrum attributes and receives History Index and
+    normalized History Position fields for geometry and material effects.
+
 DH Audio Material Reader
-    Shader helper that reads all standardized spectrum and named-band
+    Shader helper that reads all standardized spectrum, history, and named-band
     attributes. Use Instancer is a checkbox: Off for real/realized geometry,
     On when the material is reading attributes from GN instances.
 
@@ -4667,6 +4974,32 @@ This group contains a Simulation Zone. Play the timeline sequentially or bake
 the simulation when complete history is required. Jumping directly to an
 uncached future frame advances one simulation step rather than reconstructing
 every skipped frame.
+
+
+======================================================================
+RECIPE 2B: SPECTRUM WATERFALL HISTORY
+======================================================================
+
+    DH Audio Analyzer [Spectrum]
+        -> DH Audio Spectrum Points [Spectrum Points]
+        -> DH Audio Spectrum History [Spectrum Points]
+
+OR:
+
+    DH Audio Spectrum Bars [Spectrum Points]
+        -> DH Audio Spectrum History [Spectrum Points]
+
+Defaults:
+    Frames         = 32
+    History Offset = (0, -0.15, 0)
+
+The output contains separate mesh rows; it does not connect adjacent frames
+into a surface. Current points have dh_audio_history_index = 0 and
+dh_audio_history_pos = 0. The oldest retained row approaches Frames - 1 and
+1 respectively. Reset discards all previous rows in one evaluated frame.
+
+Like Temporal Response, Spectrum History contains a Simulation Zone. Play the
+timeline sequentially or bake the simulation for complete frame history.
 
 
 ======================================================================
@@ -4888,6 +5221,7 @@ Common outputs:
     Amplitude
     Normalized
     Band Position
+    History Position
     Sub
     Bass
     Mid Range
@@ -4913,6 +5247,14 @@ dh_audio_low_hz
 dh_audio_center_hz
 dh_audio_high_hz
 dh_audio_bandwidth_hz
+
+
+======================================================================
+STANDARD SPECTRUM-HISTORY ATTRIBUTES
+======================================================================
+
+dh_audio_history_index
+dh_audio_history_pos
 
 
 ======================================================================
@@ -4964,6 +5306,12 @@ Temporal response:
     band count grows, new indices initialize from zero rather than inheriting
     the previous final band.
 
+Spectrum history:
+    Frames includes the current row. Previous rows move by History Offset once
+    per evaluated frame, so the geometry remains bounded to at most Frames
+    copies of the input. Rows retain independent topology when band counts
+    change, and Reset keeps only the current row.
+
 
 ======================================================================
 GOOD NEXT ADDITIONS
@@ -4976,10 +5324,10 @@ These fit the current architecture without breaking it:
         decay
         temporal averaging
 
-    Spectrum History
-        simulation-zone trails
-        waterfall plots
-        2D / 3D history surfaces
+    History Extensions
+        connect waterfall rows into 2D / 3D surfaces
+        age-based row decimation
+        alternate history layouts
 
     Radial Spectrum Mapper
         spectrum around a circle
@@ -5080,6 +5428,7 @@ def main():
 
     response = create_response_group()
     temporal_response = create_temporal_response_group()
+    spectrum_history = create_spectrum_history()
     shader_response = create_shader_response_group()
 
     frequency_map = create_frequency_map()
@@ -5115,6 +5464,7 @@ def main():
     for group in (
         response,
         temporal_response,
+        spectrum_history,
         frequency_map,
         frequency_selection,
         analyzer,
@@ -5138,6 +5488,7 @@ def main():
     print("Architecture:")
     print("  Analyzer Spectrum -> Spectrum Points -> Curve / Fill")
     print("  Analyzer Spectrum -> Temporal Response -> downstream consumers")
+    print("  Spectrum Points   -> Spectrum History -> waterfall rows / custom surfaces")
     print("  Analyzer Spectrum -> Frequency Selection -> downstream Selection inputs")
     print("  Analyzer Spectrum -> Instances / Band Query")
     print("  Spectrum Bars     -> standalone Analyzer wrapper + compatible Spectrum Points")
@@ -5146,6 +5497,11 @@ def main():
     print()
     print("Spectrum attribute schema:")
     for label, attr_name, _dtype in SPECTRUM_ATTRS:
+        print(f"  {label:<18} -> {attr_name}")
+
+    print()
+    print("Spectrum-history attribute schema:")
+    for label, attr_name, _dtype in HISTORY_ATTRS:
         print(f"  {label:<18} -> {attr_name}")
 
     print()

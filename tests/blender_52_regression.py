@@ -30,7 +30,7 @@ import wave
 import bpy
 
 
-TOOLKIT_VERSION = "3.4.0"
+TOOLKIT_VERSION = "3.5.0"
 
 PUBLIC_GROUPS = {
     "DH Audio Analyzer": ("GeometryNodeTree", 330, "75e799e2-55ce-553a-8fdf-a74c5cf0de2c"),
@@ -41,6 +41,7 @@ PUBLIC_GROUPS = {
     "DH Audio Band Query": ("GeometryNodeTree", 285, "9b46dff4-fa9d-510f-b0ae-a8af6da87e3a"),
     "DH Audio Response": ("GeometryNodeTree", 285, "a4faf3f4-5a13-5f83-ae97-28993f20ac20"),
     "DH Audio Temporal Response": ("GeometryNodeTree", 310, "75e799e2-55ce-553a-8fdf-a74c5cf0de2c"),
+    "DH Audio Spectrum History": ("GeometryNodeTree", 310, "de47b34b-1184-5bc8-84ac-3c5ada05f601"),
     "DH Audio Spectrum Points": ("GeometryNodeTree", 285, "bb4cca6c-c5d5-52c9-80fb-754adc068f91"),
     "DH Audio Spectrum Bars": ("GeometryNodeTree", 350, "de47b34b-1184-5bc8-84ac-3c5ada05f601"),
     "DH Audio Spectrum Instances": ("GeometryNodeTree", 315, "de47b34b-1184-5bc8-84ac-3c5ada05f601"),
@@ -81,6 +82,11 @@ NAMED_BAND_ATTRIBUTES = (
     "dh_audio_air",
 )
 
+HISTORY_ATTRIBUTES = (
+    "dh_audio_history_index",
+    "dh_audio_history_pos",
+)
+
 EXPECTED_PANELS = {
     "DH Audio Analyzer": {
         "Audio": False,
@@ -116,6 +122,18 @@ EXPECTED_PANELS = {
         "Source": False,
         "Timing": False,
         "Outputs": False,
+    },
+    "DH Audio Spectrum History": {
+        "Source": False,
+        "History": False,
+        "Outputs": False,
+    },
+    "DH Audio Material Reader": {
+        "Source": False,
+        "Spectrum Attributes": False,
+        "Frequency Metadata": True,
+        "Spectrum History": True,
+        "Named Bands": False,
     },
 }
 
@@ -365,7 +383,7 @@ def _audit_interface(report):
     report.check("All internal groups generated", all(bpy.data.node_groups.get(name) for name in INTERNAL_GROUPS))
 
     asset_names = {tree.name for tree in bpy.data.node_groups if tree.asset_data}
-    report.check("Exactly 15 public assets", asset_names == set(PUBLIC_GROUPS), sorted(asset_names))
+    report.check("Exactly 16 public assets", asset_names == set(PUBLIC_GROUPS), sorted(asset_names))
 
     for name, (tree_type, width, catalog) in PUBLIC_GROUPS.items():
         tree = bpy.data.node_groups[name]
@@ -411,6 +429,9 @@ def _audit_interface(report):
         ("DH Audio Response", "Response"): 0.7,
         ("DH Audio Temporal Response", "Attack"): 0.05,
         ("DH Audio Temporal Response", "Release"): 0.25,
+        ("DH Audio Spectrum History", "Frames"): 32,
+        ("DH Audio Spectrum History", "History Offset"): [0.0, -0.15, 0.0],
+        ("DH Audio Spectrum History", "Reset"): False,
         ("DH Audio Shader Response", "Gain"): 1.0,
         ("DH Audio Shader Response", "Floor"): 0.0,
         ("DH Audio Shader Response", "Ceiling"): 0.8,
@@ -420,7 +441,16 @@ def _audit_interface(report):
     for (group_name, socket_name), expected in defaults.items():
         item = _interface_socket(bpy.data.node_groups[group_name], socket_name)
         actual = _default_value(item)
-        equal = abs(actual - expected) < 1e-5 if isinstance(expected, float) else actual == expected
+        if isinstance(expected, float):
+            equal = abs(actual - expected) < 1e-5
+        elif isinstance(expected, (list, tuple)):
+            equal = (
+                isinstance(actual, (list, tuple))
+                and len(actual) == len(expected)
+                and all(abs(a - b) < 1e-5 for a, b in zip(actual, expected))
+            )
+        else:
+            equal = actual == expected
         report.check(f"{group_name}: {socket_name} default", equal, actual)
 
     boolean_inputs = {
@@ -433,6 +463,7 @@ def _audit_interface(report):
         ("DH Audio Spectrum Instances", "Realize Instances"),
         ("DH Audio Material Reader", "Use Instancer"),
         ("DH Audio Shader Response", "Clamp to 1"),
+        ("DH Audio Spectrum History", "Reset"),
     }
     for group_name, socket_name in boolean_inputs:
         item = _interface_socket(bpy.data.node_groups[group_name], socket_name)
@@ -596,6 +627,209 @@ def _test_temporal_response(report):
         "frame_19": values[19],
         "frame_20": values[20],
         "frame_30": values[30],
+        "timeline_requirement": "Play sequentially or bake/cache; an uncached forward jump advances one simulation step.",
+    }
+
+
+def _test_spectrum_history(report):
+    def build_host(name, frames, *, reset_frame=None, varying_topology=False, store_outputs=False):
+        tree, _group_in, group_out = _new_geometry_tree(name)
+        line = tree.nodes.new("GeometryNodeMeshLine")
+        line.mode = "OFFSET"
+        _set_input(line, "Start Location", (0.0, 0.0, 0.0))
+        _set_input(line, "Offset", (1.0, 0.0, 0.0))
+
+        scene_time = tree.nodes.new("GeometryNodeInputSceneTime")
+        if varying_topology:
+            after_change = tree.nodes.new("FunctionNodeCompare")
+            after_change.data_type = "INT"
+            after_change.operation = "GREATER_EQUAL"
+            _set_input(after_change, "B", 5)
+            tree.links.new(_socket(scene_time.outputs, "Frame"), _socket(after_change.inputs, "A"))
+
+            count_switch = tree.nodes.new("GeometryNodeSwitch")
+            count_switch.input_type = "INT"
+            _set_input(count_switch, "False", 3)
+            _set_input(count_switch, "True", 5)
+            tree.links.new(_socket(after_change.outputs, "Result"), _socket(count_switch.inputs, "Switch"))
+            tree.links.new(_socket(count_switch.outputs, "Output"), _socket(line.inputs, "Count"))
+        else:
+            _set_input(line, "Count", 3)
+
+        amplitude = _store_attribute(
+            tree,
+            _socket(line.outputs, "Mesh"),
+            _socket(scene_time.outputs, "Frame"),
+            "dh_audio_amp",
+        )
+        index = tree.nodes.new("GeometryNodeInputIndex")
+        band_index = _store_attribute(
+            tree,
+            _socket(amplitude.outputs, "Geometry"),
+            _socket(index.outputs, "Index"),
+            "dh_audio_band_index",
+            "INT",
+        )
+
+        history = _group_node(tree, "DH Audio Spectrum History")
+        _set_input(history, "Frames", frames)
+        _set_input(history, "History Offset", (0.0, -1.0, 0.0))
+        tree.links.new(_socket(band_index.outputs, "Geometry"), _socket(history.inputs, "Spectrum Points"))
+
+        if reset_frame is not None:
+            reset = tree.nodes.new("FunctionNodeCompare")
+            reset.data_type = "INT"
+            reset.operation = "EQUAL"
+            _set_input(reset, "B", reset_frame)
+            tree.links.new(_socket(scene_time.outputs, "Frame"), _socket(reset.inputs, "A"))
+            tree.links.new(_socket(reset.outputs, "Result"), _socket(history.inputs, "Reset"))
+
+        geometry = _socket(history.outputs, "History")
+        if store_outputs:
+            output_index = _store_attribute(
+                tree,
+                geometry,
+                _socket(history.outputs, "History Index"),
+                "dh_test_history_index_output",
+                "INT",
+            )
+            output_position = _store_attribute(
+                tree,
+                _socket(output_index.outputs, "Geometry"),
+                _socket(history.outputs, "History Position"),
+                "dh_test_history_pos_output",
+            )
+            geometry = _socket(output_position.outputs, "Geometry")
+
+        tree.links.new(geometry, _socket(group_out.inputs, "Geometry"))
+        return _new_host(name + " Host", tree)
+
+    obj = build_host(
+        "DH Test Spectrum History",
+        4,
+        reset_frame=6,
+        store_outputs=True,
+    )
+    expected_vertices = {1: 3, 2: 6, 3: 9, 4: 12, 5: 12, 6: 3, 7: 6, 8: 9}
+    expected_edges = {frame: vertices // 3 * 2 for frame, vertices in expected_vertices.items()}
+    snapshots = {}
+    core_ok = True
+    attributes_ok = True
+    output_fields_ok = True
+    provenance_ok = True
+
+    for frame in range(1, 9):
+        snapshot = _snapshot(obj, frame)
+        snapshots[frame] = snapshot
+        attrs = snapshot["attributes"]
+        core_ok = core_ok and (
+            len(snapshot["vertices"]) == expected_vertices[frame]
+            and snapshot["edges"] == expected_edges[frame]
+        )
+        attributes_ok = attributes_ok and all(
+            name in attrs
+            for name in (*HISTORY_ATTRIBUTES, "dh_audio_amp", "dh_audio_band_index")
+        )
+        if not attributes_ok:
+            continue
+
+        ages = attrs["dh_audio_history_index"]
+        positions = attrs["dh_audio_history_pos"]
+        amplitudes = attrs["dh_audio_amp"]
+        bands = attrs["dh_audio_band_index"]
+        output_fields_ok = output_fields_ok and (
+            attrs.get("dh_test_history_index_output") == ages
+            and all(
+                abs(a - b) < 1e-6
+                for a, b in zip(attrs.get("dh_test_history_pos_output", ()), positions)
+            )
+        )
+
+        for age in sorted(set(ages)):
+            point_indices = [i for i, value in enumerate(ages) if value == age]
+            expected_amp = frame - age
+            provenance_ok = provenance_ok and (
+                len(point_indices) == 3
+                and {bands[i] for i in point_indices} == {0, 1, 2}
+                and all(abs(amplitudes[i] - expected_amp) < 1e-6 for i in point_indices)
+                and all(abs(positions[i] - age / 3.0) < 1e-6 for i in point_indices)
+                and all(abs(snapshot["vertices"][i][1] + age) < 1e-6 for i in point_indices)
+            )
+
+    report.check("Spectrum History stays bounded and keeps separate row edges", core_ok, {
+        frame: {"vertices": len(value["vertices"]), "edges": value["edges"]}
+        for frame, value in snapshots.items()
+    })
+    report.check("Spectrum History preserves and adds standardized attributes", attributes_ok)
+    report.check("Spectrum History output fields match stored attributes", output_fields_ok)
+    report.check("Spectrum History age, offset, normalization, and frame provenance", provenance_ok)
+    report.check(
+        "Spectrum History reset clears previous rows in one frame",
+        len(snapshots[5]["vertices"]) == 12 and len(snapshots[6]["vertices"]) == 3 and len(snapshots[7]["vertices"]) == 6,
+        {frame: len(snapshots[frame]["vertices"]) for frame in (5, 6, 7)},
+    )
+
+    one_frame_obj = build_host("DH Test Spectrum History One Frame", 1)
+    one_frame = [_snapshot(one_frame_obj, frame) for frame in range(1, 6)]
+    report.check(
+        "Spectrum History Frames = 1 retains only current row",
+        all(
+            len(snapshot["vertices"]) == 3
+            and snapshot["edges"] == 2
+            and snapshot["attributes"].get("dh_audio_history_index") == [0, 0, 0]
+            and snapshot["attributes"].get("dh_audio_history_pos") == [0.0, 0.0, 0.0]
+            for snapshot in one_frame
+        ),
+    )
+
+    varying_obj = build_host(
+        "DH Test Spectrum History Topology",
+        4,
+        varying_topology=True,
+    )
+    varying = {frame: _snapshot(varying_obj, frame) for frame in range(1, 9)}
+    expected_varying = {1: 3, 2: 6, 3: 9, 4: 12, 5: 14, 6: 16, 7: 18, 8: 20}
+    topology_ok = all(
+        len(varying[frame]["vertices"]) == count
+        for frame, count in expected_varying.items()
+    )
+    topology_attrs_ok = True
+    for frame, snapshot in varying.items():
+        ages = snapshot["attributes"].get("dh_audio_history_index", [])
+        bands = snapshot["attributes"].get("dh_audio_band_index", [])
+        for age in set(ages):
+            expected_count = 5 if frame - age >= 5 else 3
+            point_indices = [i for i, value in enumerate(ages) if value == age]
+            topology_attrs_ok = topology_attrs_ok and (
+                len(point_indices) == expected_count
+                and {bands[i] for i in point_indices} == set(range(expected_count))
+            )
+    report.check(
+        "Spectrum History supports changing source topology",
+        topology_ok and topology_attrs_ok,
+        {frame: len(snapshot["vertices"]) for frame, snapshot in varying.items()},
+    )
+
+    history_tree = bpy.data.node_groups["DH Audio Spectrum History"]
+    delete_node = history_tree.nodes.get("Delete Expired Rows")
+    stored_index = history_tree.nodes.get("Stored History Index")
+    report.check(
+        "Spectrum History uses Blender 5.2 point-domain bounded deletion",
+        (
+            delete_node is not None
+            and delete_node.bl_idname == "GeometryNodeDeleteGeometry"
+            and delete_node.domain == "POINT"
+            and delete_node.mode == "ALL"
+            and stored_index is not None
+            and stored_index.bl_idname == "GeometryNodeInputNamedAttribute"
+        ),
+    )
+
+    report.observations["spectrum_history"] = {
+        "frames": 4,
+        "offset": [0.0, -1.0, 0.0],
+        "frame_vertex_counts": {frame: len(snapshot["vertices"]) for frame, snapshot in snapshots.items()},
+        "varying_topology_vertex_counts": {frame: len(snapshot["vertices"]) for frame, snapshot in varying.items()},
         "timeline_requirement": "Play sequentially or bake/cache; an uncached forward jump advances one simulation step.",
     }
 
@@ -870,7 +1104,7 @@ def run_validation(repo_root=None, release_path=None, report_path=None):
 
         report.check("Repeated build structural signature", first_signature == second_signature, {"first": first_signature, "second": second_signature})
         report.check("Repeated build catalog bytes", first_catalog == second_catalog, hashlib.sha256(second_catalog).hexdigest())
-        report.check("Exactly 19 generated groups", len([tree for tree in bpy.data.node_groups if tree.name in PUBLIC_GROUPS or tree.name in INTERNAL_GROUPS]) == 19, len(bpy.data.node_groups))
+        report.check("Exactly 20 generated groups", len([tree for tree in bpy.data.node_groups if tree.name in PUBLIC_GROUPS or tree.name in INTERNAL_GROUPS]) == 20, len(bpy.data.node_groups))
         handler_count = sum(1 for handler in bpy.app.handlers.save_post if getattr(handler, "__name__", "") == "_dh_audio_write_catalogs_on_save")
         report.check("Exactly one toolkit save handler", handler_count == 1, handler_count)
 
@@ -883,6 +1117,7 @@ def run_validation(repo_root=None, release_path=None, report_path=None):
 
         report.section("Analyzer tests completed", lambda: _test_analyzer(report, sound))
         report.section("Temporal Response tests completed", lambda: _test_temporal_response(report))
+        report.section("Spectrum History tests completed", lambda: _test_spectrum_history(report))
         report.section("Named-band tests completed", lambda: _test_bands(report, sound))
         report.section("Sample Range and Band Query tests completed", lambda: _test_sample_range_and_query(report, sound))
         report.section("Visualizer tests completed", lambda: _test_visualizers(report, sound))
@@ -893,8 +1128,8 @@ def run_validation(repo_root=None, release_path=None, report_path=None):
         release = _clean_release(repo_root, release_path)
         report.observations["release"] = release
         report.check("Release contains no scene objects", release["objects"] == 0, release)
-        report.check("Release contains 19 generated groups", release["node_groups"] == 19, release)
-        report.check("Release contains 15 public assets", release["assets"] == 15, release)
+        report.check("Release contains 20 generated groups", release["node_groups"] == 20, release)
+        report.check("Release contains 16 public assets", release["assets"] == 16, release)
         report.check("Internal groups are not assets", not release["internal_assets"], release["internal_assets"])
         report.check("Release catalog sidecar exists", Path(release["catalog_path"]).is_file(), release["catalog_path"])
         report.check("Release repeat-build is deterministic", release["repeat_build_deterministic"], release)

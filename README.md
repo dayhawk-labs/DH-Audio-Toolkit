@@ -1,4 +1,4 @@
-DH AUDIO TOOLKIT 3.4.0
+DH AUDIO TOOLKIT 3.5.0
 
 Blender 5.2+
 
@@ -168,9 +168,19 @@ DH Audio Temporal Response
 
 
 
+DH Audio Spectrum History
+
+&#x20;   Accumulates positioned Spectrum Points into a bounded waterfall stack.
+
+&#x20;   Each row keeps its spectrum attributes and receives History Index and
+
+&#x20;   normalized History Position fields for geometry and material effects.
+
+
+
 DH Audio Material Reader
 
-&#x20;   Shader helper that reads all standardized spectrum and named-band
+&#x20;   Shader helper that reads all standardized spectrum, history, and named-band
 
 &#x20;   attributes. Use Instancer is a checkbox: Off for real/realized geometry,
 
@@ -384,6 +394,57 @@ uncached future frame advances one simulation step rather than reconstructing
 
 every skipped frame.
 
+
+
+
+
+======================================================================
+
+RECIPE 2B: SPECTRUM WATERFALL HISTORY
+
+======================================================================
+
+
+
+&#x20;   DH Audio Analyzer \[Spectrum]
+
+&#x20;       -> DH Audio Spectrum Points \[Spectrum Points]
+
+&#x20;       -> DH Audio Spectrum History \[Spectrum Points]
+
+
+
+OR:
+
+
+
+&#x20;   DH Audio Spectrum Bars \[Spectrum Points]
+
+&#x20;       -> DH Audio Spectrum History \[Spectrum Points]
+
+
+
+Defaults:
+
+&#x20;   Frames         = 32
+
+&#x20;   History Offset = (0, -0.15, 0)
+
+
+
+The output contains separate mesh rows; it does not connect adjacent frames
+
+into a surface. Current points have dh\_audio\_history\_index = 0 and
+
+dh\_audio\_history\_pos = 0. The oldest retained row approaches Frames - 1 and
+
+1 respectively. Reset discards all previous rows in one evaluated frame.
+
+
+
+Like Temporal Response, Spectrum History contains a Simulation Zone. Play the
+
+timeline sequentially or bake the simulation for complete frame history.
 
 
 
@@ -826,6 +887,8 @@ Common outputs:
 
 &#x20;   Band Position
 
+&#x20;   History Position
+
 &#x20;   Sub
 
 &#x20;   Bass
@@ -876,6 +939,21 @@ dh\_audio\_high\_hz
 
 dh\_audio\_bandwidth\_hz
 
+
+
+
+
+======================================================================
+
+STANDARD SPECTRUM-HISTORY ATTRIBUTES
+
+======================================================================
+
+
+
+dh\_audio\_history\_index
+
+dh\_audio\_history\_pos
 
 
 
@@ -980,6 +1058,19 @@ Temporal response:
 
 
 
+Spectrum history:
+
+&#x20;   Frames includes the current row. Previous rows move by History Offset once
+
+&#x20;   per evaluated frame, so geometry remains bounded to at most Frames copies
+
+&#x20;   of the input. Rows retain independent topology when band counts change,
+
+&#x20;   and Reset keeps only the current row.
+
+
+
+
 ======================================================================
 
 GOOD NEXT ADDITIONS
@@ -1002,13 +1093,13 @@ These fit the current architecture without breaking it:
 
 
 
-&#x20;   Spectrum History
+&#x20;   History Extensions
 
-&#x20;       simulation-zone trails
+&#x20;       connect waterfall rows into 2D / 3D surfaces
 
-&#x20;       waterfall plots
+&#x20;       age-based row decimation
 
-&#x20;       2D / 3D history surfaces
+&#x20;       alternate history layouts
 
 
 

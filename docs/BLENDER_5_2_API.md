@@ -143,6 +143,44 @@ The toolkit's verified defaults are:
   `GeometryNodeSampleIndex.clamp = False`. With clamping enabled, newly added
   bands inherit the previous final band's value. With clamping disabled,
   invalid previous indices evaluate to zero.
+- `GeometryNodeJoinGeometry` with no connected inputs evaluates as empty
+  geometry. DH Audio Spectrum History uses this as its initial simulation
+  state so the first evaluated frame is not duplicated.
+- A bounded history can store joined mesh rows directly in the geometry state.
+  Offsetting the previous state, joining the current row, and deleting expired
+  points preserves separate row edges even when the point count changes between
+  frames.
+
+## Delete Geometry
+
+- Node identifier: `GeometryNodeDeleteGeometry`
+- Inputs: `Geometry`, `Selection`; output: `Geometry`.
+- `domain` and `mode` remain writable RNA properties in Blender 5.2; they are
+  not menu input sockets in the tested runtime.
+- Tested defaults: `domain = "POINT"`, `mode = "ALL"`.
+- Tested domain values include `POINT`, `EDGE`, `FACE`, `CURVE`, `INSTANCE`,
+  and `LAYER`.
+- Tested mode values are `ALL`, `EDGE_FACE`, and `ONLY_FACE`.
+- DH Audio Spectrum History uses `domain = "POINT"` and `mode = "ALL"` to
+  remove every point whose stored age is greater than or equal to `Frames`.
+
+## Named-attribute field evaluation context
+
+Named Attribute fields are evaluated in the geometry context of the node that
+consumes them. This matters when a graph reads an attribute, modifies it with
+Store Named Attribute, and then reuses the earlier field expression downstream.
+
+In the live Spectrum History prototype, reusing `old_index + 1` after storing
+the new index caused it to evaluate against the already modified geometry and
+increment a second time. The correct pattern is:
+
+1. Read the old named attribute and calculate the new value for Store Named
+   Attribute.
+2. After that store, use a separate Named Attribute node to re-read the stored
+   value for normalization, comparisons, and deletion.
+
+This produced exact bounded ages `0 .. Frames - 1`, including the `Frames = 1`
+case, and remained correct while the source topology changed.
 
 ## Node Editor context
 
