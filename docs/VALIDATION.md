@@ -18,7 +18,7 @@ To create a clean asset-library build after the tests pass:
 & "C:\path\to\Blender 5.2\blender.exe" --background --factory-startup `
   --python tests/blender_52_regression.py -- `
   --report temp/blender_52_report.json `
-  --release "releases/DH Audio Toolkit 3.7.0.blend"
+  --release "releases/DH Audio Toolkit 3.8.0.blend"
 ```
 
 The release file is rebuilt from `src/dh_audio_toolkit.py`; test node groups,
@@ -33,6 +33,8 @@ The suite checks:
 - Shader Map range, invert, clamp, and curve interface defaults;
 - Analyzer time/channel behavior and spectrum movement across low, mid, and
   high-frequency sections;
+- Stereo Analyzer one-sampler channel-field behavior, separate Left/Right
+  carriers, paired L/R attributes, mirrored points, and Fill propagation;
 - Temporal Response attack/release timing, zero-time behavior, topology-safe
   previous-band sampling, and metadata preservation;
 - Spectrum History bounded growth, reset, one-frame history, normalized row

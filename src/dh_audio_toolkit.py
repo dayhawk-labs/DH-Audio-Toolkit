@@ -3,8 +3,14 @@ import re
 import os
 
 # =====================================================================
-# DH AUDIO TOOLKIT 3.7.0
+# DH AUDIO TOOLKIT 3.8.0
 # Blender 5.2+
+#
+# 3.8.0:
+# - Added DH Audio Stereo Analyzer with one field-driven FFT sampler for both
+#   channels, separate Left/Right carriers, and a combined stereo carrier.
+# - Added standardized stereo attributes and Material Reader outputs.
+# - Added DH Audio Stereo Points for mirrored left/right spectrum layouts.
 #
 # 3.7.0:
 # - Added DH Audio Shader Map for reusable range mapping, inversion, clamping,
@@ -60,7 +66,9 @@ import os
 #   - DH Audio Frequency Map
 #   - DH Audio Frequency Selection
 #   - DH Audio Analyzer
+#   - DH Audio Stereo Analyzer
 #   - DH Audio Spectrum Points
+#   - DH Audio Stereo Points
 #   - DH Audio Band Query
 #   - DH Audio Sample Range
 #   - DH Audio Bands
@@ -100,6 +108,16 @@ import os
 #   dh_audio_history_index
 #   dh_audio_history_pos
 #
+# Standard stereo attributes:
+#   dh_audio_channel
+#   dh_audio_channel_pos
+#   dh_audio_left_amp
+#   dh_audio_right_amp
+#   dh_audio_left_norm
+#   dh_audio_right_norm
+#   dh_audio_left_raw
+#   dh_audio_right_raw
+#
 # Notes:
 # - Analyzer spectrum values are stored on the carrier point domain.
 # - Instance on Points propagates those point attributes to instances.
@@ -107,7 +125,7 @@ import os
 # - Material Reader can switch between Geometry and Instancer lookup.
 # =====================================================================
 
-TOOLKIT_VERSION = "3.7.0"
+TOOLKIT_VERSION = "3.8.0"
 BLENDER_MIN_VERSION = (5, 2, 0)
 
 REBUILD_EXISTING = True
@@ -127,7 +145,9 @@ GROUP_RADIAL = "DH Audio Radial Spectrum"
 GROUP_FREQ_MAP = "DH Audio Frequency Map"
 GROUP_FREQ_SELECT = "DH Audio Frequency Selection"
 GROUP_ANALYZER = "DH Audio Analyzer"
+GROUP_STEREO_ANALYZER = "DH Audio Stereo Analyzer"
 GROUP_POINTS = "DH Audio Spectrum Points"
+GROUP_STEREO_POINTS = "DH Audio Stereo Points"
 GROUP_QUERY = "DH Audio Band Query"
 GROUP_RANGE = "DH Audio Sample Range"
 GROUP_BANDS = "DH Audio Bands"
@@ -155,10 +175,12 @@ CATALOG_DEFINITIONS = {
 
 ASSET_CATALOG_PATHS = {
     GROUP_ANALYZER: "Geometry Nodes/DH Audio/Analysis",
+    GROUP_STEREO_ANALYZER: "Geometry Nodes/DH Audio/Analysis",
     GROUP_BANDS: "Geometry Nodes/DH Audio/Analysis",
     GROUP_RANGE: "Geometry Nodes/DH Audio/Analysis",
     GROUP_FREQ_MAP: "Geometry Nodes/DH Audio/Mapping",
     GROUP_POINTS: "Geometry Nodes/DH Audio/Mapping",
+    GROUP_STEREO_POINTS: "Geometry Nodes/DH Audio/Mapping",
     GROUP_RADIAL: "Geometry Nodes/DH Audio/Mapping",
     GROUP_QUERY: "Geometry Nodes/DH Audio/Query",
     GROUP_FREQ_SELECT: "Geometry Nodes/DH Audio/Query",
@@ -178,10 +200,12 @@ ASSET_CATALOG_PATHS = {
 # groups stay comfortable; small utility/reader groups no longer waste space.
 PUBLIC_GROUP_WIDTHS = {
     GROUP_ANALYZER: 330,
+    GROUP_STEREO_ANALYZER: 350,
     GROUP_BANDS: 330,
     GROUP_RANGE: 315,
     GROUP_FREQ_MAP: 300,
     GROUP_POINTS: 285,
+    GROUP_STEREO_POINTS: 315,
     GROUP_RADIAL: 315,
     GROUP_QUERY: 285,
     GROUP_FREQ_SELECT: 280,
@@ -200,6 +224,7 @@ PUBLIC_GROUP_WIDTHS = {
 # Internal implementation groups are created for readability but are not
 # marked as assets. They keep the public groups compact when you Tab inside.
 INTERNAL_STORE_SPECTRUM = "DH Internal - Store Spectrum Attributes"
+INTERNAL_STORE_STEREO = "DH Internal - Store Stereo Attributes"
 INTERNAL_NAMED_MAP = "DH Internal - Named Band Map"
 INTERNAL_STORE_NAMED_META = "DH Internal - Store Named Band Metadata"
 INTERNAL_STORE_NAMED = "DH Internal - Store Named Bands"
@@ -213,10 +238,12 @@ CANONICAL_GROUPS = [
     GROUP_CURVE,
     GROUP_INSTANCES,
     GROUP_BANDS,
+    GROUP_STEREO_POINTS,
     GROUP_POINTS,
     GROUP_RANGE,
     GROUP_QUERY,
     GROUP_ANALYZER,
+    GROUP_STEREO_ANALYZER,
     GROUP_FREQ_SELECT,
     GROUP_FREQ_MAP,
     GROUP_RESPONSE,
@@ -227,6 +254,7 @@ CANONICAL_GROUPS = [
     GROUP_SHADER_RESPONSE,
     GROUP_SHADER_MAP,
     INTERNAL_STORE_SPECTRUM,
+    INTERNAL_STORE_STEREO,
     INTERNAL_NAMED_MAP,
     INTERNAL_STORE_NAMED_META,
     INTERNAL_STORE_NAMED,
@@ -260,6 +288,17 @@ SPECTRUM_ATTRS = [
 HISTORY_ATTRS = [
     ("History Index",    "dh_audio_history_index", "INT"),
     ("History Position", "dh_audio_history_pos",   "FLOAT"),
+]
+
+STEREO_ATTRS = [
+    ("Left Amplitude",      "dh_audio_left_amp",    "FLOAT"),
+    ("Right Amplitude",     "dh_audio_right_amp",   "FLOAT"),
+    ("Left Normalized",     "dh_audio_left_norm",   "FLOAT"),
+    ("Right Normalized",    "dh_audio_right_norm",  "FLOAT"),
+    ("Channel",             "dh_audio_channel",     "INT"),
+    ("Channel Position",    "dh_audio_channel_pos", "FLOAT"),
+    ("Left Raw Amplitude",  "dh_audio_left_raw",    "FLOAT"),
+    ("Right Raw Amplitude", "dh_audio_right_raw",   "FLOAT"),
 ]
 
 NAMED_BAND_ATTRS = [
@@ -862,6 +901,7 @@ def add_time_audio_interface(
     *,
     fft_default="8192",
     parent=None,
+    include_channel_controls=True,
 ):
     new_socket(
         tree, "Sound", "INPUT", "NodeSocketSound",
@@ -919,23 +959,24 @@ def add_time_audio_interface(
         ),
     )
 
-    new_socket(
-        tree, "All Channels", "INPUT", "NodeSocketBool",
-        parent=parent,
-        default=True,
-        description="Mix all channels before sampling",
-        structure_type="SINGLE",
-    )
+    if include_channel_controls:
+        new_socket(
+            tree, "All Channels", "INPUT", "NodeSocketBool",
+            parent=parent,
+            default=True,
+            description="Mix all channels before sampling",
+            structure_type="SINGLE",
+        )
 
-    new_socket(
-        tree, "Channel", "INPUT", "NodeSocketInt",
-        parent=parent,
-        default=0,
-        min_value=0,
-        max_value=32,
-        description="Channel used when All Channels is disabled",
-        structure_type="SINGLE",
-    )
+        new_socket(
+            tree, "Channel", "INPUT", "NodeSocketInt",
+            parent=parent,
+            default=0,
+            min_value=0,
+            max_value=32,
+            description="Channel used when All Channels is disabled",
+            structure_type="SINGLE",
+        )
 
 
 def build_time_source(tree, group_in, parent, location=(0, 0)):
@@ -2328,6 +2369,46 @@ def create_internal_store_spectrum():
 
 
 # =====================================================================
+# Internal helper: Store stereo attributes
+# =====================================================================
+
+def create_internal_store_stereo():
+    tree = bpy.data.node_groups.new(INTERNAL_STORE_STEREO, "GeometryNodeTree")
+    tree["dh_role"] = "internal_store_stereo"
+
+    new_socket(tree, "Geometry", "INPUT", "NodeSocketGeometry")
+    for name, _attr_name, dtype in STEREO_ATTRS:
+        socket_type = "NodeSocketInt" if dtype == "INT" else "NodeSocketFloat"
+        new_socket(tree, name, "INPUT", socket_type, structure_type="FIELD")
+    new_socket(tree, "Geometry", "OUTPUT", "NodeSocketGeometry")
+
+    nodes = tree.nodes
+    group_in = nodes.new("NodeGroupInput")
+    group_in.location = (-800, 100)
+    group_in.width = 250
+    group_out = nodes.new("NodeGroupOutput")
+    group_out.location = (1450, 100)
+    group_out.is_active_output = True
+
+    previous = group_in
+    previous_socket = "Geometry"
+    for i, (input_name, attr_name, dtype) in enumerate(STEREO_ATTRS):
+        store = store_named_attribute_node(
+            nodes, attr_name, dtype, "POINT",
+            location=(-430 + i * 220, 100),
+            label=input_name,
+        )
+        link(tree, previous, previous_socket, store, "Geometry")
+        link(tree, group_in, input_name, store, "Value")
+        previous = store
+        previous_socket = "Geometry"
+
+    link(tree, previous, previous_socket, group_out, "Geometry")
+    mark_internal(tree, "Internal writer for DH Audio Stereo Analyzer attributes")
+    return tree
+
+
+# =====================================================================
 # Internal helper: Named band range map
 # =====================================================================
 
@@ -2862,6 +2943,361 @@ def create_analyzer(response_group, frequency_map_group, store_spectrum_group):
         tree,
         "General-purpose Blender 5.2 multi-band audio analyzer with FFT/window controls, "
         "linear/log spacing, response shaping, compact internal architecture, and named attributes."
+    )
+    return tree
+
+
+# =====================================================================
+# DH Audio Stereo Analyzer
+# =====================================================================
+
+def create_stereo_analyzer(
+    response_group,
+    frequency_map_group,
+    store_spectrum_group,
+    store_stereo_group,
+):
+    """Analyze left and right channels with one field-driven sound sampler."""
+    tree = bpy.data.node_groups.new(GROUP_STEREO_ANALYZER, "GeometryNodeTree")
+    tree["dh_role"] = "stereo_analyzer"
+    nodes = tree.nodes
+
+    template = nodes.new("GeometryNodeSampleSoundFrequencies")
+    template.name = "MENU TEMPLATE"
+    set_default(template, "FFT Size", "8192")
+    set_default(template, "Window Function", "Hann")
+
+    audio_panel = tree.interface.new_panel(
+        name="Audio",
+        description="Required Sound, time, and FFT controls for stereo channel analysis",
+        default_closed=False,
+    )
+    spectrum_panel = tree.interface.new_panel(
+        name="Spectrum",
+        description="Frequency distribution shared by both channels",
+        default_closed=False,
+    )
+    response_panel = tree.interface.new_panel(
+        name="Response",
+        description="Response shaping shared by both channels",
+        default_closed=False,
+    )
+    carrier_panel = tree.interface.new_panel(
+        name="Carrier",
+        description="Raw carrier spacing; usually leave collapsed",
+        default_closed=True,
+    )
+    output_panel = tree.interface.new_panel(
+        name="Stereo Outputs",
+        description="Combined and separated channel carriers plus common stereo fields",
+        default_closed=False,
+    )
+    metadata_panel = tree.interface.new_panel(
+        name="Advanced Outputs",
+        description="Raw channel values and frequency metadata",
+        default_closed=True,
+    )
+
+    add_time_audio_interface(
+        tree, template, fft_default="8192", parent=audio_panel,
+        include_channel_controls=False,
+    )
+    new_socket(tree, "Bands", "INPUT", "NodeSocketInt", parent=spectrum_panel, default=32, min_value=1, max_value=512, structure_type="SINGLE")
+    new_socket(tree, "Min Frequency", "INPUT", "NodeSocketFloatFrequency", parent=spectrum_panel, default=30.0, min_value=0.001, max_value=96000.0, structure_type="SINGLE")
+    new_socket(tree, "Max Frequency", "INPUT", "NodeSocketFloatFrequency", parent=spectrum_panel, default=16000.0, min_value=0.001, max_value=96000.0, structure_type="SINGLE")
+    new_socket(tree, "Logarithmic", "INPUT", "NodeSocketBool", parent=spectrum_panel, default=True, structure_type="SINGLE")
+    add_response_controls(tree, response_panel)
+    new_socket(tree, "Spacing", "INPUT", "NodeSocketFloatDistance", parent=carrier_panel, default=1.0, min_value=0.0, max_value=10000.0, description="X spacing between bands", structure_type="SINGLE")
+    new_socket(tree, "Channel Spacing", "INPUT", "NodeSocketFloatDistance", parent=carrier_panel, default=1.0, min_value=0.0, max_value=10000.0, description="Y separation between the raw Left and Right carrier rows", structure_type="SINGLE")
+
+    new_socket(tree, "Stereo Spectrum", "OUTPUT", "NodeSocketGeometry", parent=output_panel, description="Combined Left and Right carriers; two independent edge rows")
+    new_socket(tree, "Left Spectrum", "OUTPUT", "NodeSocketGeometry", parent=output_panel, description="Left-channel carrier compatible with mono spectrum consumers")
+    new_socket(tree, "Right Spectrum", "OUTPUT", "NodeSocketGeometry", parent=output_panel, description="Right-channel carrier compatible with mono spectrum consumers")
+    for name, socket_type in [
+        ("Amplitude", "NodeSocketFloat"),
+        ("Left Amplitude", "NodeSocketFloat"),
+        ("Right Amplitude", "NodeSocketFloat"),
+        ("Left Normalized", "NodeSocketFloat"),
+        ("Right Normalized", "NodeSocketFloat"),
+        ("Channel", "NodeSocketInt"),
+        ("Channel Position", "NodeSocketFloat"),
+        ("Band Index", "NodeSocketInt"),
+        ("Band Position", "NodeSocketFloat"),
+    ]:
+        new_socket(tree, name, "OUTPUT", socket_type, parent=output_panel, structure_type="FIELD")
+    for name, socket_type in [
+        ("Raw Amplitude", "NodeSocketFloat"),
+        ("Left Raw Amplitude", "NodeSocketFloat"),
+        ("Right Raw Amplitude", "NodeSocketFloat"),
+        ("Low Frequency", "NodeSocketFloatFrequency"),
+        ("Center Frequency", "NodeSocketFloatFrequency"),
+        ("High Frequency", "NodeSocketFloatFrequency"),
+        ("Bandwidth", "NodeSocketFloatFrequency"),
+    ]:
+        new_socket(tree, name, "OUTPUT", socket_type, parent=metadata_panel, structure_type="FIELD")
+
+    group_out = nodes.new("NodeGroupOutput")
+    group_out.location = (3900, 120)
+    group_out.width = 290
+    group_out.is_active_output = True
+
+    frame_carrier = make_frame(nodes, "FRAME_STEREO_CARRIER", "1  TWO-ROW CARRIER", (-1700, 620), 900)
+    frame_map = make_frame(nodes, "FRAME_STEREO_MAP", "2  BAND + CHANNEL MAP", (-680, 620), 760)
+    frame_audio = make_frame(nodes, "FRAME_STEREO_AUDIO", "3  ONE FIELD-DRIVEN FFT SAMPLE", (200, 620), 760)
+    frame_response = make_frame(nodes, "FRAME_STEREO_RESPONSE", "4  RESPONSE", (1080, 620), 560)
+    frame_store = make_frame(nodes, "FRAME_STEREO_STORE", "5  STANDARD + PAIRED ATTRIBUTES", (1760, 620), 880)
+    frame_output = make_frame(nodes, "FRAME_STEREO_OUTPUT", "6  LEFT / RIGHT OUTPUTS", (2760, 620), 720)
+
+    carrier_in = local_group_input(
+        nodes, "Stereo Carrier", ["Bands", "Spacing", "Channel Spacing"],
+        parent=frame_carrier, location=(20, 120), width=210,
+    )
+    offset = nodes.new("ShaderNodeCombineXYZ")
+    offset.name = "Band Spacing"
+    offset.parent = frame_carrier
+    offset.location = (250, 80)
+    link(tree, carrier_in, "Spacing", offset, "X")
+
+    left_line = nodes.new("GeometryNodeMeshLine")
+    left_line.name = "Left Carrier"
+    left_line.label = "Left Band Row"
+    left_line.mode = "OFFSET"
+    left_line.parent = frame_carrier
+    left_line.location = (450, 220)
+    right_line = nodes.new("GeometryNodeMeshLine")
+    right_line.name = "Right Carrier"
+    right_line.label = "Right Band Row"
+    right_line.mode = "OFFSET"
+    right_line.parent = frame_carrier
+    right_line.location = (450, -20)
+    for line in (left_line, right_line):
+        link(tree, carrier_in, "Bands", line, "Count")
+        link(tree, offset, "Vector", line, "Offset")
+
+    join_rows = nodes.new("GeometryNodeJoinGeometry")
+    join_rows.name = "Join Stereo Rows"
+    join_rows.label = "Left then Right"
+    join_rows.parent = frame_carrier
+    join_rows.location = (680, 100)
+    link(tree, left_line, "Mesh", join_rows, "Geometry")
+    link(tree, right_line, "Mesh", join_rows, "Geometry")
+
+    index = nodes.new("GeometryNodeInputIndex")
+    index.name = "Stereo Point Index"
+    index.parent = frame_map
+    index.location = (20, 260)
+    map_in = local_group_input(
+        nodes, "Stereo Mapping",
+        ["Bands", "Min Frequency", "Max Frequency", "Logarithmic", "Channel Spacing"],
+        parent=frame_map, location=(20, 20), width=230,
+    )
+    band_index = integer_math_node(nodes, "Band Index", "MODULO", (220, 260), frame_map, "Index modulo Bands")
+    channel = integer_math_node(nodes, "Channel Index", "DIVIDE_FLOOR", (220, 80), frame_map, "Index divided by Bands")
+    link(tree, index, "Index", band_index, 0)
+    link(tree, map_in, "Bands", band_index, 1)
+    link(tree, index, "Index", channel, 0)
+    link(tree, map_in, "Bands", channel, 1)
+
+    channel_times_two = math_node(nodes, "Channel x 2", "MULTIPLY", (420, 80), frame_map, "0 / 2")
+    set_default(channel_times_two, 1, 2.0)
+    channel_position = math_node(nodes, "Channel Position", "SUBTRACT", (600, 80), frame_map, "Left -1 / Right +1")
+    set_default(channel_position, 1, 1.0)
+    link(tree, channel, "Value", channel_times_two, 0)
+    link(tree, channel_times_two, "Value", channel_position, 0)
+
+    row_offset = math_node(nodes, "Row Y Offset", "MULTIPLY", (420, -100), frame_map, "Channel Position x Spacing")
+    half_offset = math_node(nodes, "Half Row Offset", "MULTIPLY", (600, -100), frame_map, "Centered Channel Rows")
+    set_default(half_offset, 1, 0.5)
+    link(tree, channel_position, "Value", row_offset, 0)
+    link(tree, map_in, "Channel Spacing", row_offset, 1)
+    link(tree, row_offset, "Value", half_offset, 0)
+    row_vector = nodes.new("ShaderNodeCombineXYZ")
+    row_vector.name = "Stereo Row Offset"
+    row_vector.parent = frame_map
+    row_vector.location = (600, -260)
+    link(tree, half_offset, "Value", row_vector, "Y")
+    position_rows = nodes.new("GeometryNodeSetPosition")
+    position_rows.name = "Position Stereo Rows"
+    position_rows.parent = frame_map
+    position_rows.location = (780, -120)
+    link(tree, join_rows, "Geometry", position_rows, "Geometry")
+    link(tree, row_vector, "Vector", position_rows, "Offset")
+
+    frequency_map = nodes.new("GeometryNodeGroup")
+    frequency_map.name = "Stereo Frequency Map"
+    frequency_map.label = GROUP_FREQ_MAP
+    frequency_map.node_tree = frequency_map_group
+    frequency_map.parent = frame_map
+    frequency_map.location = (600, 280)
+    frequency_map.width = 250
+    link(tree, band_index, "Value", frequency_map, "Band Index")
+    for socket_name in ("Bands", "Min Frequency", "Max Frequency", "Logarithmic"):
+        link(tree, map_in, socket_name, frequency_map, socket_name)
+
+    audio_in = local_group_input(
+        nodes, "Stereo Audio",
+        ["Sound", "Use Scene Time", "Time", "Time Offset", "Window Function", "FFT Size"],
+        parent=frame_audio, location=(20, 100), width=240,
+    )
+    time_node = build_time_source(tree, audio_in, frame_audio, (280, 210))
+    sample = nodes.new("GeometryNodeSampleSoundFrequencies")
+    sample.name = "Sample Left and Right"
+    sample.label = "One Sampler / Channel Field"
+    sample.parent = frame_audio
+    sample.location = (300, -100)
+    sample.width = 300
+    set_default(sample, "All Channels", False)
+    set_default(sample, "FFT Size", "8192")
+    set_default(sample, "Window Function", "Hann")
+    link(tree, audio_in, "Sound", sample, "Sound")
+    link(tree, time_node, "Value", sample, "Time")
+    link(tree, channel, "Value", sample, "Channel")
+    link(tree, frequency_map, "Low Frequency", sample, "Low")
+    link(tree, frequency_map, "High Frequency", sample, "High")
+    link(tree, audio_in, "FFT Size", sample, "FFT Size")
+    link(tree, audio_in, "Window Function", sample, "Window Function")
+
+    response_in = local_group_input(
+        nodes, "Stereo Response", ["Gain", "Floor", "Ceiling", "Clamp to 1", "Response"],
+        parent=frame_response, location=(20, 80), width=210,
+    )
+    response = nodes.new("GeometryNodeGroup")
+    response.name = "Stereo Response"
+    response.label = GROUP_RESPONSE
+    response.node_tree = response_group
+    response.parent = frame_response
+    response.location = (250, 80)
+    response.width = 280
+    link(tree, sample, "Amplitude", response, "Value")
+    for socket_name in ("Gain", "Floor", "Ceiling", "Clamp to 1", "Response"):
+        link(tree, response_in, socket_name, response, socket_name)
+
+    standard_store = nodes.new("GeometryNodeGroup")
+    standard_store.name = "Store Stereo Spectrum Attributes"
+    standard_store.label = "Standard dh_audio_*"
+    standard_store.node_tree = store_spectrum_group
+    standard_store.parent = frame_store
+    standard_store.location = (20, 200)
+    standard_store.width = 390
+    link(tree, position_rows, "Geometry", standard_store, "Geometry")
+    link(tree, response, "Value", standard_store, "Amplitude")
+    link(tree, response, "Normalized", standard_store, "Normalized")
+    link(tree, sample, "Amplitude", standard_store, "Raw Amplitude")
+    link(tree, band_index, "Value", standard_store, "Band Index")
+    link(tree, frequency_map, "Band Position", standard_store, "Band Position")
+    link(tree, frequency_map, "Low Frequency", standard_store, "Low Frequency")
+    link(tree, frequency_map, "Center Frequency", standard_store, "Center Frequency")
+    link(tree, frequency_map, "High Frequency", standard_store, "High Frequency")
+    link(tree, frequency_map, "Bandwidth", standard_store, "Bandwidth")
+
+    right_index = integer_math_node(nodes, "Paired Right Index", "ADD", (20, -120), frame_store, "Bands + Band Index")
+    link(tree, band_index, "Value", right_index, 0)
+    store_in = local_group_input(nodes, "Pair Index", ["Bands"], parent=frame_store, location=(20, -300), width=170)
+    link(tree, store_in, "Bands", right_index, 1)
+
+    pair_samples = {}
+    source_specs = [
+        ("Amplitude", "dh_audio_amp"),
+        ("Normalized", "dh_audio_norm"),
+        ("Raw Amplitude", "dh_audio_raw"),
+    ]
+    for i, (label, attr_name) in enumerate(source_specs):
+        y = 300 - i * 250
+        attr = named_attribute_node(nodes, attr_name, "FLOAT", parent=frame_store, location=(430, y), label=label)
+        left_sample = nodes.new("GeometryNodeSampleIndex")
+        left_sample.name = f"Sample Left {label}"
+        left_sample.label = f"Left {label}"
+        left_sample.data_type = "FLOAT"
+        left_sample.domain = "POINT"
+        left_sample.clamp = True
+        left_sample.parent = frame_store
+        left_sample.location = (640, y + 40)
+        right_sample = nodes.new("GeometryNodeSampleIndex")
+        right_sample.name = f"Sample Right {label}"
+        right_sample.label = f"Right {label}"
+        right_sample.data_type = "FLOAT"
+        right_sample.domain = "POINT"
+        right_sample.clamp = True
+        right_sample.parent = frame_store
+        right_sample.location = (640, y - 80)
+        for pair_node in (left_sample, right_sample):
+            link(tree, standard_store, "Geometry", pair_node, "Geometry")
+            link(tree, attr, "Attribute", pair_node, "Value")
+        link(tree, band_index, "Value", left_sample, "Index")
+        link(tree, right_index, "Value", right_sample, "Index")
+        pair_samples[("Left", label)] = left_sample
+        pair_samples[("Right", label)] = right_sample
+
+    stereo_store = nodes.new("GeometryNodeGroup")
+    stereo_store.name = "Store Paired Stereo Attributes"
+    stereo_store.label = "Store L / R + Channel"
+    stereo_store.node_tree = store_stereo_group
+    stereo_store.parent = frame_store
+    stereo_store.location = (900, 120)
+    stereo_store.width = 390
+    link(tree, standard_store, "Geometry", stereo_store, "Geometry")
+    link(tree, channel, "Value", stereo_store, "Channel")
+    link(tree, channel_position, "Value", stereo_store, "Channel Position")
+    for side in ("Left", "Right"):
+        for label in ("Amplitude", "Normalized", "Raw Amplitude"):
+            link(tree, pair_samples[(side, label)], "Value", stereo_store, f"{side} {label}")
+
+    is_left = nodes.new("FunctionNodeCompare")
+    is_left.name = "Is Left Channel"
+    is_left.label = "Channel = 0"
+    is_left.data_type = "INT"
+    is_left.operation = "EQUAL"
+    is_left.parent = frame_output
+    is_left.location = (20, 220)
+    set_default(is_left, "B", 0)
+    channel_attr = named_attribute_node(nodes, "dh_audio_channel", "INT", parent=frame_output, location=(20, 20), label="Channel")
+    link(tree, channel_attr, "Attribute", is_left, "A")
+    separate = nodes.new("GeometryNodeSeparateGeometry")
+    separate.name = "Separate Left and Right"
+    separate.label = "Left / Right Carriers"
+    separate.domain = "POINT"
+    separate.parent = frame_output
+    separate.location = (240, 120)
+    link(tree, stereo_store, "Geometry", separate, "Geometry")
+    link(tree, is_left, "Result", separate, "Selection")
+
+    link(tree, stereo_store, "Geometry", group_out, "Stereo Spectrum")
+    link(tree, separate, "Selection", group_out, "Left Spectrum")
+    link(tree, separate, "Inverted", group_out, "Right Spectrum")
+
+    field_specs = [
+        ("Amplitude", "dh_audio_amp", "FLOAT"),
+        ("Left Amplitude", "dh_audio_left_amp", "FLOAT"),
+        ("Right Amplitude", "dh_audio_right_amp", "FLOAT"),
+        ("Left Normalized", "dh_audio_left_norm", "FLOAT"),
+        ("Right Normalized", "dh_audio_right_norm", "FLOAT"),
+        ("Channel", "dh_audio_channel", "INT"),
+        ("Channel Position", "dh_audio_channel_pos", "FLOAT"),
+        ("Band Index", "dh_audio_band_index", "INT"),
+        ("Band Position", "dh_audio_band_pos", "FLOAT"),
+        ("Raw Amplitude", "dh_audio_raw", "FLOAT"),
+        ("Left Raw Amplitude", "dh_audio_left_raw", "FLOAT"),
+        ("Right Raw Amplitude", "dh_audio_right_raw", "FLOAT"),
+        ("Low Frequency", "dh_audio_low_hz", "FLOAT"),
+        ("Center Frequency", "dh_audio_center_hz", "FLOAT"),
+        ("High Frequency", "dh_audio_high_hz", "FLOAT"),
+        ("Bandwidth", "dh_audio_bandwidth_hz", "FLOAT"),
+    ]
+    for i, (output_name, attr_name, dtype) in enumerate(field_specs):
+        attr = named_attribute_node(
+            nodes, attr_name, dtype,
+            parent=frame_output,
+            location=(460 + (i % 2) * 220, 300 - (i // 2) * 140),
+            label=output_name,
+        )
+        attr.width = 190
+        link(tree, attr, "Attribute", group_out, output_name)
+
+    nodes.remove(template)
+    mark_asset(
+        tree,
+        "Analyze left and right channels with one field-driven Sample Sound Frequencies node. "
+        "Outputs combined and separate carriers with standard, channel, and paired L/R attributes."
     )
     return tree
 
@@ -3498,6 +3934,11 @@ def create_material_reader():
         description="Detailed spectrum frequency metadata",
         default_closed=True,
     )
+    stereo_panel = tree.interface.new_panel(
+        name="Stereo Attributes",
+        description="Left/right values and channel metadata written by DH Audio Stereo Analyzer",
+        default_closed=False,
+    )
     history_panel = tree.interface.new_panel(
         name="Spectrum History",
         description="Row age values written by DH Audio Spectrum History",
@@ -3531,6 +3972,14 @@ def create_material_reader():
         )
         material_outputs.append((output_name, attr_name, "spectrum"))
 
+    for output_name, attr_name, _dtype in STEREO_ATTRS:
+        new_socket(
+            tree, output_name, "OUTPUT", "NodeSocketFloat",
+            parent=stereo_panel,
+            description=f"Reads '{attr_name}'",
+        )
+        material_outputs.append((output_name, attr_name, "stereo"))
+
     for output_name, attr_name, _dtype in HISTORY_ATTRS:
         new_socket(
             tree, output_name, "OUTPUT", "NodeSocketFloat",
@@ -3558,14 +4007,16 @@ def create_material_reader():
     group_out.is_active_output = True
 
     frame_spectrum = make_frame(nodes, "FRAME_SPECTRUM", "SPECTRUM ATTRIBUTE READERS", (-850, 800), 1000)
+    frame_stereo = make_frame(nodes, "FRAME_STEREO", "STEREO ATTRIBUTE READERS", (-850, 50), 1000)
     frame_history = make_frame(nodes, "FRAME_HISTORY", "SPECTRUM HISTORY READERS", (-850, -450), 1000)
     frame_named = make_frame(nodes, "FRAME_NAMED", "NAMED BAND ATTRIBUTE READERS", (-850, -1000), 1000)
     frames = {
         "spectrum": frame_spectrum,
+        "stereo": frame_stereo,
         "history": frame_history,
         "named": frame_named,
     }
-    local_indices = {"spectrum": 0, "history": 0, "named": 0}
+    local_indices = {"spectrum": 0, "stereo": 0, "history": 0, "named": 0}
 
     for output_name, attr_name, category in material_outputs:
         local_i = local_indices[category]
@@ -3631,7 +4082,7 @@ def create_material_reader():
 
     mark_asset(
         tree,
-        "Single shader reader for all DH Audio spectrum, spectrum-history, and named-band attributes. "
+        "Single shader reader for all DH Audio spectrum, stereo, spectrum-history, and named-band attributes. "
         "Use Source = 0 for geometry/realized data and Source = 1 for GN instance attributes."
     )
     return tree
@@ -3842,6 +4293,102 @@ def create_spectrum_points():
         tree,
         "Map DH Audio Analyzer carrier geometry into visible audio-height points. "
         "The output is compatible with Spectrum Bars' Spectrum Points, Spectrum Curve, and Spectrum Fill."
+    )
+    return tree
+
+
+# =====================================================================
+# DH Audio Stereo Points
+# =====================================================================
+
+def create_stereo_points(spectrum_points_group):
+    """Mirror left and right spectrum carriers around a shared baseline."""
+    tree = bpy.data.node_groups.new(GROUP_STEREO_POINTS, "GeometryNodeTree")
+    tree["dh_role"] = "stereo_points"
+
+    source_panel = tree.interface.new_panel(
+        name="Stereo Source",
+        description=f"Separate channel carriers from {GROUP_STEREO_ANALYZER}",
+        default_closed=False,
+    )
+    layout_panel = tree.interface.new_panel(
+        name="Mirrored Layout",
+        description="Left rises above the baseline; Right mirrors below it",
+        default_closed=False,
+    )
+    output_panel = tree.interface.new_panel(
+        name="Outputs",
+        description="Combined or separate mirrored point rows",
+        default_closed=False,
+    )
+
+    new_socket(tree, "Left Spectrum", "INPUT", "NodeSocketGeometry", parent=source_panel, description=f"{GROUP_STEREO_ANALYZER} Left Spectrum output")
+    new_socket(tree, "Right Spectrum", "INPUT", "NodeSocketGeometry", parent=source_panel, description=f"{GROUP_STEREO_ANALYZER} Right Spectrum output")
+    new_socket(tree, "Height", "INPUT", "NodeSocketFloatDistance", parent=layout_panel, default=3.0, min_value=0.0, max_value=10000.0, description="Maximum distance from the shared baseline", structure_type="SINGLE")
+    new_socket(tree, "Baseline", "INPUT", "NodeSocketFloatDistance", parent=layout_panel, default=0.0, min_value=-10000.0, max_value=10000.0, description="Mirror axis in Z", structure_type="SINGLE")
+    new_socket(tree, "Center Spectrum", "INPUT", "NodeSocketBool", parent=layout_panel, default=True, structure_type="SINGLE")
+    new_socket(tree, "X Scale", "INPUT", "NodeSocketFloat", parent=layout_panel, default=1.0, min_value=-10000.0, max_value=10000.0, structure_type="SINGLE")
+    new_socket(tree, "X Offset", "INPUT", "NodeSocketFloatDistance", parent=layout_panel, default=0.0, min_value=-10000.0, max_value=10000.0, structure_type="SINGLE")
+
+    new_socket(tree, "Mirrored Points", "OUTPUT", "NodeSocketGeometry", parent=output_panel, description="Joined Left-above and Right-below point rows with separate edges")
+    new_socket(tree, "Left Points", "OUTPUT", "NodeSocketGeometry", parent=output_panel, description="Positive-height Left row; safe for Curve, Fill, or History")
+    new_socket(tree, "Right Points", "OUTPUT", "NodeSocketGeometry", parent=output_panel, description="Negative-height Right row; safe for Curve, Fill, or History")
+
+    nodes = tree.nodes
+    group_out = nodes.new("NodeGroupOutput")
+    group_out.location = (1220, 100)
+    group_out.width = 250
+    group_out.is_active_output = True
+    frame = make_frame(nodes, "FRAME_STEREO_POINTS", "MIRRORED STEREO POINTS", (-900, 560), 1800)
+    group_in = local_group_input(
+        nodes, "Stereo Points",
+        ["Left Spectrum", "Right Spectrum", "Height", "Baseline", "Center Spectrum", "X Scale", "X Offset"],
+        parent=frame, location=(20, 100), width=240,
+    )
+
+    right_height = math_node(nodes, "Mirror Right Height", "MULTIPLY", (280, -220), frame, "Height x -1")
+    set_default(right_height, 1, -1.0)
+    link(tree, group_in, "Height", right_height, 0)
+
+    left_points = nodes.new("GeometryNodeGroup")
+    left_points.name = "Left Spectrum Points"
+    left_points.label = "Left / Positive"
+    left_points.node_tree = spectrum_points_group
+    left_points.parent = frame
+    left_points.location = (470, 220)
+    left_points.width = 300
+    right_points = nodes.new("GeometryNodeGroup")
+    right_points.name = "Right Spectrum Points"
+    right_points.label = "Right / Mirrored"
+    right_points.node_tree = spectrum_points_group
+    right_points.parent = frame
+    right_points.location = (470, -180)
+    right_points.width = 300
+
+    link(tree, group_in, "Left Spectrum", left_points, "Spectrum")
+    link(tree, group_in, "Right Spectrum", right_points, "Spectrum")
+    link(tree, group_in, "Height", left_points, "Height")
+    link(tree, right_height, "Value", right_points, "Height")
+    for socket_name in ("Baseline", "Center Spectrum", "X Scale", "X Offset"):
+        link(tree, group_in, socket_name, left_points, socket_name)
+        link(tree, group_in, socket_name, right_points, socket_name)
+
+    join = nodes.new("GeometryNodeJoinGeometry")
+    join.name = "Join Mirrored Channels"
+    join.label = "Left + Right"
+    join.parent = frame
+    join.location = (820, 80)
+    link(tree, left_points, "Spectrum Points", join, "Geometry")
+    link(tree, right_points, "Spectrum Points", join, "Geometry")
+
+    link(tree, join, "Geometry", group_out, "Mirrored Points")
+    link(tree, left_points, "Spectrum Points", group_out, "Left Points")
+    link(tree, right_points, "Spectrum Points", group_out, "Right Points")
+
+    mark_asset(
+        tree,
+        "Map Stereo Analyzer Left and Right carriers into mirrored point rows around a shared baseline. "
+        "Separate outputs remain compatible with Spectrum Curve, Fill, and History."
     )
     return tree
 
@@ -4694,7 +5241,7 @@ def create_spectrum_curve():
 # 10. DH Audio Spectrum Fill
 # =====================================================================
 
-def create_spectrum_fill():
+def create_spectrum_fill(store_stereo_group):
     """
     Build a quad strip between positioned spectrum points and a flat baseline.
     Compatible sources:
@@ -4742,13 +5289,13 @@ def create_spectrum_fill():
 
     nodes = tree.nodes
     group_out = nodes.new("NodeGroupOutput")
-    group_out.location = (1500, 100)
+    group_out.location = (2600, 100)
     group_out.width = 240
     group_out.is_active_output = True
 
     frame_source = make_frame(nodes, "FRAME_SOURCE", "1  SOURCE + COUNT", (-900, 520), 650)
     frame_strip = make_frame(nodes, "FRAME_STRIP", "2  BUILD QUAD STRIP", (-100, 520), 1240)
-    frame_attrs = make_frame(nodes, "FRAME_ATTRS", "3  ATTRIBUTES + MATERIAL", (1280, 520), 620)
+    frame_attrs = make_frame(nodes, "FRAME_ATTRS", "3  ATTRIBUTES + MATERIAL", (1280, 520), 2200)
 
     inp = local_group_input(
         nodes, "Spectrum Fill",
@@ -4930,12 +5477,35 @@ def create_spectrum_fill():
     link(tree, store_pos, "Geometry", store_idx, "Geometry")
     link(tree, sample_band_idx, "Value", store_idx, "Value")
 
+    stereo_store = nodes.new("GeometryNodeGroup")
+    stereo_store.name = "Preserve Stereo Attributes"
+    stereo_store.label = "Preserve L / R + Channel"
+    stereo_store.node_tree = store_stereo_group
+    stereo_store.parent = frame_attrs
+    stereo_store.location = (1540, 80)
+    stereo_store.width = 420
+    link(tree, store_idx, "Geometry", stereo_store, "Geometry")
+
+    for i, (input_name, attr_name, dtype) in enumerate(STEREO_ATTRS):
+        col = i % 2
+        row = i // 2
+        x = 760 + col * 380
+        y = 360 - row * 210
+        attr = named_attribute_node(
+            nodes, attr_name, dtype,
+            parent=frame_attrs, location=(x, y), label=input_name,
+        )
+        sample = sample_source_attr(
+            input_name, dtype, attr, (x + 180, y)
+        )
+        link(tree, sample, "Value", stereo_store, input_name)
+
     set_mat = nodes.new("GeometryNodeSetMaterial")
     set_mat.name = "Fill Material"
     set_mat.label = "Apply Material"
     set_mat.parent = frame_attrs
-    set_mat.location = (480, -300)
-    link(tree, store_idx, "Geometry", set_mat, "Geometry")
+    set_mat.location = (1990, 80)
+    link(tree, stereo_store, "Geometry", set_mat, "Geometry")
     link(tree, inp, "Material", set_mat, "Material")
 
     link(tree, set_mat, "Geometry", group_out, "Mesh")
@@ -4943,7 +5513,8 @@ def create_spectrum_fill():
     mark_asset(
         tree,
         "Build a filled quad strip below positioned spectrum points. "
-        "Accepts DH Audio Spectrum Points or Spectrum Bars' Spectrum Points output."
+        "Accepts DH Audio Spectrum Points, Stereo Points channel outputs, or "
+        "Spectrum Bars' Spectrum Points while preserving stereo attributes."
     )
     return tree
 
@@ -5391,6 +5962,11 @@ DH Audio Analyzer
     amplitude, normalized amplitude, band index/position, frequency bounds,
     center frequency, and bandwidth as standardized dh_audio_* attributes.
 
+DH Audio Stereo Analyzer
+    Efficient two-channel analyzer. A single field-driven Sample Sound node
+    evaluates channels 0 and 1 across two carrier rows. Outputs Stereo, Left,
+    and Right Spectrum geometry plus paired L/R amplitude attributes.
+
 DH Audio Frequency Map
     Advanced mapping utility used by Analyzer. Converts Band Index + band
     count + frequency limits into linear or logarithmic frequency boundaries.
@@ -5400,6 +5976,11 @@ DH Audio Spectrum Points
     Turns Analyzer's flat carrier into visible audio-height points while
     preserving all spectrum attributes. This is the standard modular source
     for Spectrum Curve and Spectrum Fill.
+
+DH Audio Stereo Points
+    Maps Stereo Analyzer's separate Left and Right carriers around a shared
+    baseline. Left rises above zero and Right mirrors below it. Separate point
+    outputs remain safe for Curve, Fill, and History workflows.
 
 DH Audio Radial Spectrum
     Maps Analyzer carriers or positioned Spectrum Points into circles, open
@@ -5458,9 +6039,9 @@ DH Audio Spectrum History
     normalized History Position fields for geometry and material effects.
 
 DH Audio Material Reader
-    Shader helper that reads all standardized spectrum, history, and named-band
-    attributes. Use Instancer is a checkbox: Off for real/realized geometry,
-    On when the material is reading attributes from GN instances.
+    Shader helper that reads all standardized spectrum, stereo, history, and
+    named-band attributes. Use Instancer is a checkbox: Off for real/realized
+    geometry, On when reading attributes from GN instances.
 
 DH Audio Shader Response
     Shader-side equivalent of DH Audio Response with the same Gain/Floor/
@@ -5553,7 +6134,32 @@ materials still know amplitude, band index, band position, frequency, etc.
 
 
 ======================================================================
-RECIPE 2A: ATTACK / RELEASE SMOOTHING
+RECIPE 2A: MIRRORED LEFT / RIGHT SPECTRUM
+======================================================================
+
+    DH Audio Stereo Analyzer [Left Spectrum / Right Spectrum]
+        -> DH Audio Stereo Points [Left Spectrum / Right Spectrum]
+
+Outputs:
+    Mirrored Points    joined two-row result
+    Left Points        positive Z, safe for Curve / Fill / History
+    Right Points       negative Z, safe for Curve / Fill / History
+
+Stereo Analyzer uses one Sample Sound Frequencies node. Channel is a field:
+the first carrier row samples channel 0 and the second samples channel 1.
+
+Stereo Spectrum contains two independent edge rows. Use the separate Left and
+Right outputs when a downstream node assumes one ordered row. In particular,
+feed Left Points and Right Points into separate Spectrum Fill nodes, then join
+the resulting meshes. Spectrum Fill preserves the stereo attributes.
+
+Material Reader exposes Left/Right Amplitude, Normalized, Raw Amplitude,
+Channel, and Channel Position. The standard Amplitude output always follows
+the channel of the geometry currently being shaded.
+
+
+======================================================================
+RECIPE 2B: ATTACK / RELEASE SMOOTHING
 ======================================================================
 
     DH Audio Analyzer [Spectrum]
@@ -5575,7 +6181,7 @@ every skipped frame.
 
 
 ======================================================================
-RECIPE 2B: SPECTRUM WATERFALL HISTORY
+RECIPE 2C: SPECTRUM WATERFALL HISTORY
 ======================================================================
 
     DH Audio Analyzer [Spectrum]
@@ -5601,7 +6207,7 @@ timeline sequentially or bake the simulation for complete frame history.
 
 
 ======================================================================
-RECIPE 2C: RADIAL / SPIRAL SPECTRUM
+RECIPE 2D: RADIAL / SPIRAL SPECTRUM
 ======================================================================
 
     DH Audio Analyzer [Spectrum]
@@ -5892,6 +6498,20 @@ dh_audio_bandwidth_hz
 
 
 ======================================================================
+STANDARD STEREO ATTRIBUTES
+======================================================================
+
+dh_audio_channel          0 = Left, 1 = Right
+dh_audio_channel_pos     -1 = Left, +1 = Right
+dh_audio_left_amp
+dh_audio_right_amp
+dh_audio_left_norm
+dh_audio_right_norm
+dh_audio_left_raw
+dh_audio_right_raw
+
+
+======================================================================
 STANDARD SPECTRUM-HISTORY ATTRIBUTES
 ======================================================================
 
@@ -5986,9 +6606,10 @@ These fit the current architecture without breaking it:
         frequency-to-selection
         select by low/high Hz rather than band number
 
-    Stereo Tools
-        left/right channel split
-        stereo width visualizations
+    Stereo Extensions
+        stereo-aware Bars wrapper
+        stereo named musical bands
+        alternate mirror axes and radial stereo layouts
 
     Dynamic Normalization
         auto gain
@@ -6082,12 +6703,17 @@ def main():
     frequency_map = create_frequency_map()
     frequency_selection = create_frequency_selection()
     store_spectrum = create_internal_store_spectrum()
+    store_stereo = create_internal_store_stereo()
     named_map = create_internal_named_band_map()
     named_meta_store = create_internal_store_named_metadata()
     named_store = create_internal_store_named_bands()
 
     analyzer = create_analyzer(response, frequency_map, store_spectrum)
+    stereo_analyzer = create_stereo_analyzer(
+        response, frequency_map, store_spectrum, store_stereo
+    )
     spectrum_points = create_spectrum_points()
+    stereo_points = create_stereo_points(spectrum_points)
     radial_spectrum = create_radial_spectrum()
     query = create_band_query()
     sample_range = create_sample_range(response)
@@ -6095,7 +6721,7 @@ def main():
 
     spectrum_instances = create_spectrum_instances()
     spectrum_curve = create_spectrum_curve()
-    spectrum_fill = create_spectrum_fill()
+    spectrum_fill = create_spectrum_fill(store_stereo)
 
     material_reader = create_material_reader()
     bars = create_spectrum_bars(analyzer)
@@ -6117,7 +6743,9 @@ def main():
         frequency_map,
         frequency_selection,
         analyzer,
+        stereo_analyzer,
         spectrum_points,
+        stereo_points,
         radial_spectrum,
         query,
         sample_range,
@@ -6138,6 +6766,7 @@ def main():
     print()
     print("Architecture:")
     print("  Analyzer Spectrum -> Spectrum Points -> Curve / Fill")
+    print("  Stereo Analyzer L/R -> Stereo Points -> mirrored / separate consumers")
     print("  Analyzer / Points -> Radial Spectrum -> cyclic curve / custom consumers")
     print("  Analyzer Spectrum -> Temporal Response -> downstream consumers")
     print("  Spectrum Points   -> Spectrum History -> waterfall rows / custom surfaces")
@@ -6155,6 +6784,11 @@ def main():
     print("Spectrum-history attribute schema:")
     for label, attr_name, _dtype in HISTORY_ATTRS:
         print(f"  {label:<18} -> {attr_name}")
+
+    print()
+    print("Stereo attribute schema:")
+    for label, attr_name, _dtype in STEREO_ATTRS:
+        print(f"  {label:<20} -> {attr_name}")
 
     print()
     print("Named-band attribute schema:")

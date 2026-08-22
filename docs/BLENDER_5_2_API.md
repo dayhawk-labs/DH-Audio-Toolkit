@@ -28,6 +28,14 @@ identifiers and values over older Geometry Nodes examples.
 - `Low` and `High` accept fields. A single Sample Sound Frequencies node can
   therefore evaluate different frequency ranges on different carrier points.
   DH Audio Analyzer and DH Audio Bands both use this field-driven behavior.
+- `Channel` also accepts and evaluates an integer field when `All Channels` is
+  false. This was verified with a two-point stereo WAV probe: point 0 sampled
+  channel 0 and point 1 sampled channel 1 through one node, producing the
+  expected low-frequency amplitude ratio above 800,000:1. DH Audio Stereo
+  Analyzer therefore uses one sampler across its joined Left/Right carriers.
+- A joined two-row carrier keeps each Mesh Line's internal edges, but evaluated
+  Join Geometry point order should not be treated as a public contract. Use the
+  stored `dh_audio_channel` attribute to identify Left and Right downstream.
 
 ## Shader scalar mapping
 

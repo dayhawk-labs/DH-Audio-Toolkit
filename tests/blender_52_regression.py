@@ -30,10 +30,11 @@ import wave
 import bpy
 
 
-TOOLKIT_VERSION = "3.7.0"
+TOOLKIT_VERSION = "3.8.0"
 
 PUBLIC_GROUPS = {
     "DH Audio Analyzer": ("GeometryNodeTree", 330, "75e799e2-55ce-553a-8fdf-a74c5cf0de2c"),
+    "DH Audio Stereo Analyzer": ("GeometryNodeTree", 350, "75e799e2-55ce-553a-8fdf-a74c5cf0de2c"),
     "DH Audio Bands": ("GeometryNodeTree", 330, "75e799e2-55ce-553a-8fdf-a74c5cf0de2c"),
     "DH Audio Sample Range": ("GeometryNodeTree", 315, "75e799e2-55ce-553a-8fdf-a74c5cf0de2c"),
     "DH Audio Frequency Map": ("GeometryNodeTree", 300, "bb4cca6c-c5d5-52c9-80fb-754adc068f91"),
@@ -43,6 +44,7 @@ PUBLIC_GROUPS = {
     "DH Audio Temporal Response": ("GeometryNodeTree", 310, "75e799e2-55ce-553a-8fdf-a74c5cf0de2c"),
     "DH Audio Spectrum History": ("GeometryNodeTree", 310, "de47b34b-1184-5bc8-84ac-3c5ada05f601"),
     "DH Audio Spectrum Points": ("GeometryNodeTree", 285, "bb4cca6c-c5d5-52c9-80fb-754adc068f91"),
+    "DH Audio Stereo Points": ("GeometryNodeTree", 315, "bb4cca6c-c5d5-52c9-80fb-754adc068f91"),
     "DH Audio Radial Spectrum": ("GeometryNodeTree", 315, "bb4cca6c-c5d5-52c9-80fb-754adc068f91"),
     "DH Audio Spectrum Bars": ("GeometryNodeTree", 350, "de47b34b-1184-5bc8-84ac-3c5ada05f601"),
     "DH Audio Spectrum Instances": ("GeometryNodeTree", 315, "de47b34b-1184-5bc8-84ac-3c5ada05f601"),
@@ -55,6 +57,7 @@ PUBLIC_GROUPS = {
 
 INTERNAL_GROUPS = {
     "DH Internal - Store Spectrum Attributes",
+    "DH Internal - Store Stereo Attributes",
     "DH Internal - Named Band Map",
     "DH Internal - Store Named Band Metadata",
     "DH Internal - Store Named Bands",
@@ -89,6 +92,17 @@ HISTORY_ATTRIBUTES = (
     "dh_audio_history_pos",
 )
 
+STEREO_ATTRIBUTES = (
+    "dh_audio_channel",
+    "dh_audio_channel_pos",
+    "dh_audio_left_amp",
+    "dh_audio_right_amp",
+    "dh_audio_left_norm",
+    "dh_audio_right_norm",
+    "dh_audio_left_raw",
+    "dh_audio_right_raw",
+)
+
 EXPECTED_PANELS = {
     "DH Audio Analyzer": {
         "Audio": False,
@@ -97,6 +111,14 @@ EXPECTED_PANELS = {
         "Carrier": True,
         "Primary Outputs": False,
         "Frequency Metadata": True,
+    },
+    "DH Audio Stereo Analyzer": {
+        "Audio": False,
+        "Spectrum": False,
+        "Response": False,
+        "Carrier": True,
+        "Stereo Outputs": False,
+        "Advanced Outputs": True,
     },
     "DH Audio Bands": {
         "Audio": False,
@@ -135,9 +157,15 @@ EXPECTED_PANELS = {
         "Radial Layout": False,
         "Outputs": False,
     },
+    "DH Audio Stereo Points": {
+        "Stereo Source": False,
+        "Mirrored Layout": False,
+        "Outputs": False,
+    },
     "DH Audio Material Reader": {
         "Source": False,
         "Spectrum Attributes": False,
+        "Stereo Attributes": False,
         "Frequency Metadata": True,
         "Spectrum History": True,
         "Named Bands": False,
@@ -387,13 +415,22 @@ def _build_analyzer_wrapper(sound, output="Spectrum"):
     return tree, analyzer
 
 
+def _build_stereo_wrapper(sound, output="Stereo Spectrum", bands=16):
+    tree, _group_in, group_out = _new_geometry_tree(f"DH Test Stereo {output}")
+    analyzer = _group_node(tree, "DH Audio Stereo Analyzer")
+    _set_input(analyzer, "Sound", sound)
+    _set_input(analyzer, "Bands", bands)
+    tree.links.new(_socket(analyzer.outputs, output), _socket(group_out.inputs, "Geometry"))
+    return tree, analyzer
+
+
 def _audit_interface(report):
     report.check("Blender 5.2 or newer", bpy.app.version >= (5, 2, 0), bpy.app.version_string)
     report.check("All public groups generated", all(bpy.data.node_groups.get(name) for name in PUBLIC_GROUPS))
     report.check("All internal groups generated", all(bpy.data.node_groups.get(name) for name in INTERNAL_GROUPS))
 
     asset_names = {tree.name for tree in bpy.data.node_groups if tree.asset_data}
-    report.check("Exactly 18 public assets", asset_names == set(PUBLIC_GROUPS), sorted(asset_names))
+    report.check("Exactly 20 public assets", asset_names == set(PUBLIC_GROUPS), sorted(asset_names))
 
     for name, (tree_type, width, catalog) in PUBLIC_GROUPS.items():
         tree = bpy.data.node_groups[name]
@@ -430,6 +467,11 @@ def _audit_interface(report):
     defaults = {
         ("DH Audio Analyzer", "FFT Size"): "8192",
         ("DH Audio Analyzer", "Window Function"): "Hann",
+        ("DH Audio Stereo Analyzer", "FFT Size"): "8192",
+        ("DH Audio Stereo Analyzer", "Window Function"): "Hann",
+        ("DH Audio Stereo Analyzer", "Bands"): 32,
+        ("DH Audio Stereo Analyzer", "Spacing"): 1.0,
+        ("DH Audio Stereo Analyzer", "Channel Spacing"): 1.0,
         ("DH Audio Spectrum Bars", "Bar Profile"): "Box",
         ("DH Audio Spectrum Curve", "Curve Style"): "Smooth",
         ("DH Audio Response", "Gain"): 1.0,
@@ -450,6 +492,9 @@ def _audit_interface(report):
         ("DH Audio Radial Spectrum", "Start Angle"): 0.0,
         ("DH Audio Radial Spectrum", "Sweep Angle"): math.tau,
         ("DH Audio Radial Spectrum", "Cyclic"): True,
+        ("DH Audio Stereo Points", "Height"): 3.0,
+        ("DH Audio Stereo Points", "Baseline"): 0.0,
+        ("DH Audio Stereo Points", "Center Spectrum"): True,
         ("DH Audio Shader Response", "Gain"): 1.0,
         ("DH Audio Shader Response", "Floor"): 0.0,
         ("DH Audio Shader Response", "Ceiling"): 0.8,
@@ -484,6 +529,9 @@ def _audit_interface(report):
         ("DH Audio Analyzer", "All Channels"),
         ("DH Audio Analyzer", "Logarithmic"),
         ("DH Audio Analyzer", "Clamp to 1"),
+        ("DH Audio Stereo Analyzer", "Use Scene Time"),
+        ("DH Audio Stereo Analyzer", "Logarithmic"),
+        ("DH Audio Stereo Analyzer", "Clamp to 1"),
         ("DH Audio Bands", "Store on Points"),
         ("DH Audio Bands", "Store on Instances"),
         ("DH Audio Spectrum Instances", "Realize Instances"),
@@ -493,6 +541,7 @@ def _audit_interface(report):
         ("DH Audio Shader Map", "Clamp"),
         ("DH Audio Spectrum History", "Reset"),
         ("DH Audio Radial Spectrum", "Cyclic"),
+        ("DH Audio Stereo Points", "Center Spectrum"),
     }
     for group_name, socket_name in boolean_inputs:
         item = _interface_socket(bpy.data.node_groups[group_name], socket_name)
@@ -500,6 +549,7 @@ def _audit_interface(report):
 
     for group_name in (
         "DH Audio Analyzer",
+        "DH Audio Stereo Analyzer",
         "DH Audio Bands",
         "DH Audio Sample Range",
         "DH Audio Spectrum Bars",
@@ -620,6 +670,127 @@ def _test_analyzer(report, sound):
     report.check("Analyzer custom Time overrides scene frame", custom_peak > peaks[0], {"scene_peak": peaks[0], "custom_peak": custom_peak})
 
     report.observations["analyzer_frames"] = frames
+
+
+def _test_stereo_analyzer(report, sound):
+    bands = 16
+    tree, analyzer = _build_stereo_wrapper(sound, bands=bands)
+    obj = _new_host("DH Test Stereo Analyzer Host", tree)
+    snapshot = _snapshot(obj, 10)
+    attrs = snapshot["attributes"]
+
+    channels = attrs.get("dh_audio_channel", [])
+    channel_positions = attrs.get("dh_audio_channel_pos", [])
+    band_indices = attrs.get("dh_audio_band_index", [])
+    amplitude = attrs.get("dh_audio_amp", [])
+    left_amplitude = attrs.get("dh_audio_left_amp", [])
+    right_amplitude = attrs.get("dh_audio_right_amp", [])
+
+    report.check(
+        "Stereo Analyzer creates two independent carrier rows",
+        len(snapshot["vertices"]) == bands * 2 and snapshot["edges"] == (bands - 1) * 2,
+        {"vertices": len(snapshot["vertices"]), "edges": snapshot["edges"]},
+    )
+    report.check(
+        "Stereo Analyzer stores all stereo attributes",
+        all(name in attrs for name in STEREO_ATTRIBUTES),
+        sorted(attrs),
+    )
+    report.check(
+        "Stereo Analyzer channel metadata is ordered Left then Right",
+        channels == [0] * bands + [1] * bands
+        and channel_positions == [-1.0] * bands + [1.0] * bands
+        and band_indices == list(range(bands)) * 2,
+        {"channels": channels, "positions": channel_positions, "bands": band_indices},
+    )
+    report.check(
+        "Stereo Analyzer paired attributes repeat by matching band",
+        all(abs(left_amplitude[i] - left_amplitude[i + bands]) < 1e-6 for i in range(bands))
+        and all(abs(right_amplitude[i] - right_amplitude[i + bands]) < 1e-6 for i in range(bands)),
+    )
+    report.check(
+        "Stereo Analyzer standard amplitude follows each point's channel",
+        all(abs(amplitude[i] - left_amplitude[i]) < 1e-6 for i in range(bands))
+        and all(abs(amplitude[i + bands] - right_amplitude[i + bands]) < 1e-6 for i in range(bands)),
+    )
+    left_peak = max(range(bands), key=lambda i: left_amplitude[i])
+    right_peak = max(range(bands), key=lambda i: right_amplitude[i])
+    report.check(
+        "Stereo Analyzer separates distinct Left and Right spectra",
+        left_peak != right_peak and sum(abs(left_amplitude[i] - right_amplitude[i]) for i in range(bands)) > 1e-4,
+        {"left_peak": left_peak, "right_peak": right_peak},
+    )
+
+    stereo_tree = bpy.data.node_groups["DH Audio Stereo Analyzer"]
+    sample_nodes = [node for node in stereo_tree.nodes if node.bl_idname == "GeometryNodeSampleSoundFrequencies"]
+    report.check(
+        "Stereo Analyzer uses one field-driven Sample Sound node",
+        len(sample_nodes) == 1 and _socket(sample_nodes[0].inputs, "Channel").is_linked,
+        [node.name for node in sample_nodes],
+    )
+
+    for output_name, expected_channel in (("Left Spectrum", 0), ("Right Spectrum", 1)):
+        output_tree, _node = _build_stereo_wrapper(sound, output=output_name, bands=bands)
+        output_obj = _new_host(f"DH Test {output_name} Host", output_tree)
+        output_snapshot = _snapshot(output_obj, 10)
+        report.check(
+            f"Stereo Analyzer {output_name} is a mono-compatible carrier",
+            len(output_snapshot["vertices"]) == bands
+            and output_snapshot["edges"] == bands - 1
+            and output_snapshot["attributes"].get("dh_audio_channel") == [expected_channel] * bands,
+            {"vertices": len(output_snapshot["vertices"]), "edges": output_snapshot["edges"]},
+        )
+
+    points_tree, _group_in, points_out = _new_geometry_tree("DH Test Mirrored Stereo Points")
+    points_analyzer = _group_node(points_tree, "DH Audio Stereo Analyzer")
+    _set_input(points_analyzer, "Sound", sound)
+    _set_input(points_analyzer, "Bands", bands)
+    stereo_points = _group_node(points_tree, "DH Audio Stereo Points")
+    points_tree.links.new(_socket(points_analyzer.outputs, "Left Spectrum"), _socket(stereo_points.inputs, "Left Spectrum"))
+    points_tree.links.new(_socket(points_analyzer.outputs, "Right Spectrum"), _socket(stereo_points.inputs, "Right Spectrum"))
+    points_tree.links.new(_socket(stereo_points.outputs, "Mirrored Points"), _socket(points_out.inputs, "Geometry"))
+    points_obj = _new_host("DH Test Mirrored Stereo Points Host", points_tree)
+    points_snapshot = _snapshot(points_obj, 10)
+    point_channels = points_snapshot["attributes"].get("dh_audio_channel", [])
+    left_z = [co[2] for co, channel_value in zip(points_snapshot["vertices"], point_channels) if channel_value == 0]
+    right_z = [co[2] for co, channel_value in zip(points_snapshot["vertices"], point_channels) if channel_value == 1]
+    report.check(
+        "Stereo Points mirrors Left above and Right below the baseline",
+        min(left_z) >= -1e-6 and max(left_z) > 1e-4
+        and max(right_z) <= 1e-6 and min(right_z) < -1e-4,
+        {"left": [min(left_z), max(left_z)], "right": [min(right_z), max(right_z)]},
+    )
+    report.check(
+        "Stereo Points preserves stereo and spectrum attributes",
+        all(name in points_snapshot["attributes"] for name in (*SPECTRUM_ATTRIBUTES, *STEREO_ATTRIBUTES)),
+        sorted(points_snapshot["attributes"]),
+    )
+
+    fill_tree, _fill_in, fill_out = _new_geometry_tree("DH Test Stereo Fill")
+    fill_analyzer = _group_node(fill_tree, "DH Audio Stereo Analyzer")
+    _set_input(fill_analyzer, "Sound", sound)
+    _set_input(fill_analyzer, "Bands", bands)
+    fill_points = _group_node(fill_tree, "DH Audio Stereo Points")
+    fill = _group_node(fill_tree, "DH Audio Spectrum Fill")
+    fill_tree.links.new(_socket(fill_analyzer.outputs, "Left Spectrum"), _socket(fill_points.inputs, "Left Spectrum"))
+    fill_tree.links.new(_socket(fill_analyzer.outputs, "Right Spectrum"), _socket(fill_points.inputs, "Right Spectrum"))
+    fill_tree.links.new(_socket(fill_points.outputs, "Left Points"), _socket(fill.inputs, "Spectrum Points"))
+    fill_tree.links.new(_socket(fill.outputs, "Mesh"), _socket(fill_out.inputs, "Geometry"))
+    fill_obj = _new_host("DH Test Stereo Fill Host", fill_tree)
+    fill_snapshot = _snapshot(fill_obj, 10)
+    report.check(
+        "Spectrum Fill preserves paired stereo attributes",
+        all(name in fill_snapshot["attributes"] for name in STEREO_ATTRIBUTES)
+        and set(fill_snapshot["attributes"].get("dh_audio_channel", [])) == {0},
+        sorted(fill_snapshot["attributes"]),
+    )
+
+    report.observations["stereo"] = {
+        "bands_per_channel": bands,
+        "left_peak": left_peak,
+        "right_peak": right_peak,
+        "mirrored_z": {"left": [min(left_z), max(left_z)], "right": [min(right_z), max(right_z)]},
+    }
 
 
 def _test_temporal_response(report):
@@ -1462,7 +1633,7 @@ def run_validation(repo_root=None, release_path=None, report_path=None):
 
         report.check("Repeated build structural signature", first_signature == second_signature, {"first": first_signature, "second": second_signature})
         report.check("Repeated build catalog bytes", first_catalog == second_catalog, hashlib.sha256(second_catalog).hexdigest())
-        report.check("Exactly 22 generated groups", len([tree for tree in bpy.data.node_groups if tree.name in PUBLIC_GROUPS or tree.name in INTERNAL_GROUPS]) == 22, len(bpy.data.node_groups))
+        report.check("Exactly 25 generated groups", len([tree for tree in bpy.data.node_groups if tree.name in PUBLIC_GROUPS or tree.name in INTERNAL_GROUPS]) == 25, len(bpy.data.node_groups))
         handler_count = sum(1 for handler in bpy.app.handlers.save_post if getattr(handler, "__name__", "") == "_dh_audio_write_catalogs_on_save")
         report.check("Exactly one toolkit save handler", handler_count == 1, handler_count)
 
@@ -1475,6 +1646,7 @@ def run_validation(repo_root=None, release_path=None, report_path=None):
         bpy.context.scene.render.fps_base = 1.0
 
         report.section("Analyzer tests completed", lambda: _test_analyzer(report, sound))
+        report.section("Stereo Analyzer tests completed", lambda: _test_stereo_analyzer(report, sound))
         report.section("Temporal Response tests completed", lambda: _test_temporal_response(report))
         report.section("Spectrum History tests completed", lambda: _test_spectrum_history(report))
         report.section("Radial Spectrum tests completed", lambda: _test_radial_spectrum(report))
@@ -1488,8 +1660,8 @@ def run_validation(repo_root=None, release_path=None, report_path=None):
         release = _clean_release(repo_root, release_path)
         report.observations["release"] = release
         report.check("Release contains no scene objects", release["objects"] == 0, release)
-        report.check("Release contains 22 generated groups", release["node_groups"] == 22, release)
-        report.check("Release contains 18 public assets", release["assets"] == 18, release)
+        report.check("Release contains 25 generated groups", release["node_groups"] == 25, release)
+        report.check("Release contains 20 public assets", release["assets"] == 20, release)
         report.check("Internal groups are not assets", not release["internal_assets"], release["internal_assets"])
         report.check("Release catalog sidecar exists", Path(release["catalog_path"]).is_file(), release["catalog_path"])
         report.check("Release repeat-build is deterministic", release["repeat_build_deterministic"], release)

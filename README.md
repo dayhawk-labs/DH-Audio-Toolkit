@@ -1,4 +1,4 @@
-DH AUDIO TOOLKIT 3.7.0
+DH AUDIO TOOLKIT 3.8.0
 
 Blender 5.2+
 
@@ -56,6 +56,16 @@ DH Audio Analyzer
 
 
 
+DH Audio Stereo Analyzer
+
+&#x20;   Efficient two-channel analyzer using one field-driven Sample Sound node.
+
+&#x20;   Outputs combined Stereo, Left, and Right Spectrum carriers plus paired
+
+&#x20;   left/right amplitude, normalized, raw, and channel attributes.
+
+
+
 DH Audio Frequency Map
 
 &#x20;   Advanced mapping utility used by Analyzer. Converts Band Index + band
@@ -73,6 +83,16 @@ DH Audio Spectrum Points
 &#x20;   preserving all spectrum attributes. This is the standard modular source
 
 &#x20;   for Spectrum Curve and Spectrum Fill.
+
+
+
+DH Audio Stereo Points
+
+&#x20;   Maps Stereo Analyzer Left and Right carriers around a shared baseline.
+
+&#x20;   Left rises above zero and Right mirrors below it. Separate outputs remain
+
+&#x20;   compatible with Spectrum Curve, Fill, and History.
 
 
 
@@ -190,11 +210,11 @@ DH Audio Spectrum History
 
 DH Audio Material Reader
 
-&#x20;   Shader helper that reads all standardized spectrum, history, and named-band
+&#x20;   Shader helper that reads standardized spectrum, stereo, history, and
 
-&#x20;   attributes. Use Instancer is a checkbox: Off for real/realized geometry,
+&#x20;   named-band attributes. Use Instancer is Off for real/realized geometry
 
-&#x20;   On when the material is reading attributes from GN instances.
+&#x20;   and On when reading attributes from GN instances.
 
 
 
@@ -378,7 +398,41 @@ materials still know amplitude, band index, band position, frequency, etc.
 
 ======================================================================
 
-RECIPE 2A: ATTACK / RELEASE SMOOTHING
+RECIPE 2A: MIRRORED LEFT / RIGHT SPECTRUM
+
+======================================================================
+
+
+
+&#x20;   DH Audio Stereo Analyzer \[Left Spectrum / Right Spectrum]
+
+&#x20;       -> DH Audio Stereo Points \[Left Spectrum / Right Spectrum]
+
+
+
+Mirrored Points joins both rows. Left Points and Right Points remain separate
+
+for Curve, Fill, and History. Stereo Analyzer evaluates both channels through
+
+one field-driven Sample Sound Frequencies node.
+
+
+
+For filled stereo, send Left Points and Right Points through separate Spectrum
+
+Fill nodes, then join the meshes. Fill preserves the stereo attributes.
+
+
+
+Material Reader exposes Left/Right Amplitude, Normalized, Raw Amplitude,
+
+Channel, and Channel Position.
+
+
+
+======================================================================
+
+RECIPE 2B: ATTACK / RELEASE SMOOTHING
 
 ======================================================================
 
@@ -422,7 +476,7 @@ every skipped frame.
 
 ======================================================================
 
-RECIPE 2B: SPECTRUM WATERFALL HISTORY
+RECIPE 2C: SPECTRUM WATERFALL HISTORY
 
 ======================================================================
 
@@ -473,7 +527,7 @@ timeline sequentially or bake the simulation for complete frame history.
 
 ======================================================================
 
-RECIPE 2C: RADIAL / SPIRAL SPECTRUM
+RECIPE 2D: RADIAL / SPIRAL SPECTRUM
 
 ======================================================================
 
@@ -1042,6 +1096,32 @@ dh\_audio\_bandwidth\_hz
 
 
 
+======================================================================
+
+STANDARD STEREO ATTRIBUTES
+
+======================================================================
+
+
+
+dh\_audio\_channel          0 = Left, 1 = Right
+
+dh\_audio\_channel\_pos     -1 = Left, +1 = Right
+
+dh\_audio\_left\_amp
+
+dh\_audio\_right\_amp
+
+dh\_audio\_left\_norm
+
+dh\_audio\_right\_norm
+
+dh\_audio\_left\_raw
+
+dh\_audio\_right\_raw
+
+
+
 
 
 ======================================================================
@@ -1234,11 +1314,13 @@ These fit the current architecture without breaking it:
 
 
 
-&#x20;   Stereo Tools
+&#x20;   Stereo Extensions
 
-&#x20;       left/right channel split
+&#x20;       stereo-aware Bars wrapper
 
-&#x20;       stereo width visualizations
+&#x20;       stereo named musical bands
+
+&#x20;       alternate mirror axes and radial stereo layouts
 
 
 
