@@ -366,22 +366,16 @@ def new_socket(
         try:
             sock.subtype = subtype
         except Exception as exc:
-            print(
-                f"Warning: could not set subtype '{subtype}' "
-                f"for interface socket '{name}': {exc}"
-            )
+            raise RuntimeError(
+                f"Could not set subtype '{subtype}' for interface "
+                f"socket '{name}': {exc}"
+            ) from exc
 
     if structure_type is not None and hasattr(sock, "structure_type"):
-        try:
-            sock.structure_type = structure_type
-        except Exception:
-            pass
+        sock.structure_type = structure_type
 
     if default is not None and hasattr(sock, "default_value"):
-        try:
-            sock.default_value = default
-        except Exception:
-            pass
+        sock.default_value = default
 
     if min_value is not None and hasattr(sock, "min_value"):
         sock.min_value = min_value
@@ -413,6 +407,14 @@ def new_menu_socket_from(
             f"on node '{source_node.name}'."
         )
 
+    # Blender 5.2 runtime menu definitions are copied from the source socket,
+    # including its current selection. Setting the interface default after
+    # from_socket() can silently clear custom Menu Switch defaults to "".
+    # Set the native/source socket first so the copied interface and every
+    # subsequently created group-node instance inherit a valid selection.
+    if default is not None:
+        set_default(source_node, source_socket_name, default)
+
     sock = tree.interface.new_socket(
         name=name,
         description=description,
@@ -424,27 +426,17 @@ def new_menu_socket_from(
     try:
         sock.from_socket(source_node, source_socket)
     except Exception as exc:
-        print(
-            f"Warning: could not copy menu metadata for '{name}': {exc}"
-        )
+        raise RuntimeError(
+            f"Could not copy Blender 5.2 menu metadata for '{name}' "
+            f"from node '{source_node.name}': {exc}"
+        ) from exc
 
     # from_socket can copy source presentation metadata.
     sock.name = name
     sock.description = description
 
     if hasattr(sock, "structure_type"):
-        try:
-            sock.structure_type = "SINGLE"
-        except Exception:
-            pass
-
-    if default is not None and hasattr(sock, "default_value"):
-        try:
-            sock.default_value = default
-        except Exception as exc:
-            print(
-                f"Warning: could not set menu default '{name}'={default}: {exc}"
-            )
+        sock.structure_type = "SINGLE"
 
     return sock
 
@@ -603,10 +595,7 @@ def assign_catalog_to_asset(tree):
     if not catalog_path:
         return
     catalog_id, _simple_name = CATALOG_DEFINITIONS[catalog_path]
-    try:
-        tree.asset_data.catalog_id = catalog_id
-    except Exception as exc:
-        print(f"Warning: could not assign catalog for '{tree.name}': {exc}")
+    tree.asset_data.catalog_id = catalog_id
 
 
 def ensure_catalog_definition_file():
@@ -638,19 +627,29 @@ def ensure_catalog_definition_file():
 
     toolkit_ids = {catalog_id for catalog_id, _ in CATALOG_DEFINITIONS.values()}
     kept = []
-    saw_version = False
+    managed_comments = {
+        "# This is an Asset Catalog Definition file for Blender.",
+        "# DH Audio Toolkit entries use stable UUIDs for portable sharing.",
+        "# Existing catalogs preserved below.",
+    }
 
     for line in existing_lines:
         stripped = line.strip()
         if stripped == "VERSION 1":
-            saw_version = True
+            continue
+        if stripped in managed_comments:
+            # These lines are regenerated below. Keeping them would make each
+            # rebuild append another copy beneath "Existing catalogs".
             continue
         if stripped and not stripped.startswith("#") and ":" in stripped:
             possible_id = stripped.split(":", 1)[0]
             if possible_id in toolkit_ids:
                 # Replace any previous definition using our canonical UUID.
                 continue
-        kept.append(line)
+        if stripped:
+            # Preserve unrelated catalog definitions and comments while
+            # normalizing blank-line layout for deterministic rewrites.
+            kept.append(line)
 
     header = [
         "# This is an Asset Catalog Definition file for Blender.",
@@ -665,7 +664,7 @@ def ensure_catalog_definition_file():
     ]
 
     # Preserve unrelated catalogs while keeping a clean single VERSION line.
-    preserved = [line for line in kept if line.strip() != "VERSION 1"]
+    preserved = kept
     output = header + catalog_lines
     if preserved:
         output += ["", "# Existing catalogs preserved below."] + preserved
@@ -1903,11 +1902,8 @@ def create_analyzer(response_group, frequency_map_group, store_spectrum_group):
 
     template = nodes.new("GeometryNodeSampleSoundFrequencies")
     template.name = "MENU TEMPLATE"
-    try:
-        set_default(template, "FFT Size", "8192")
-        set_default(template, "Window Function", "Hann")
-    except Exception:
-        pass
+    set_default(template, "FFT Size", "8192")
+    set_default(template, "Window Function", "Hann")
 
     audio_panel = tree.interface.new_panel(
         name="Audio",
@@ -2098,11 +2094,8 @@ def create_analyzer(response_group, frequency_map_group, store_spectrum_group):
     sample.width = 300
     sample.parent = frame_audio
     sample.location = (280, -80)
-    try:
-        set_default(sample, "FFT Size", "8192")
-        set_default(sample, "Window Function", "Hann")
-    except Exception:
-        pass
+    set_default(sample, "FFT Size", "8192")
+    set_default(sample, "Window Function", "Hann")
 
     connect_audio_settings(tree, audio_in, sample, time_node)
     link(tree, freq_map, "Low Frequency", sample, "Low")
@@ -2286,10 +2279,7 @@ def create_band_query():
         sample_index.parent = frame_query
         sample_index.location = (x + 210, y)
 
-        try:
-            sample_index.clamp = True
-        except Exception:
-            pass
+        sample_index.clamp = True
 
         link(tree, query_in, "Spectrum", sample_index, "Geometry")
         link(tree, attr, "Attribute", sample_index, "Value")
@@ -2318,11 +2308,8 @@ def create_sample_range(response_group):
     nodes = tree.nodes
     template = nodes.new("GeometryNodeSampleSoundFrequencies")
     template.name = "MENU TEMPLATE"
-    try:
-        set_default(template, "FFT Size", "8192")
-        set_default(template, "Window Function", "Hann")
-    except Exception:
-        pass
+    set_default(template, "FFT Size", "8192")
+    set_default(template, "Window Function", "Hann")
 
     audio_panel = tree.interface.new_panel(
         name="Audio",
@@ -2423,11 +2410,8 @@ def create_sample_range(response_group):
     sample.width = 300
     sample.parent = frame_audio
     sample.location = (330, -100)
-    try:
-        set_default(sample, "FFT Size", "8192")
-        set_default(sample, "Window Function", "Hann")
-    except Exception:
-        pass
+    set_default(sample, "FFT Size", "8192")
+    set_default(sample, "Window Function", "Hann")
 
     connect_audio_settings(tree, audio_in, sample, time_node)
     link(tree, safe_low, "Value", sample, "Low")
@@ -2496,11 +2480,8 @@ def create_named_bands(named_map_group, named_meta_store_group, named_store_grou
     nodes = tree.nodes
     template = nodes.new("GeometryNodeSampleSoundFrequencies")
     template.name = "MENU TEMPLATE"
-    try:
-        set_default(template, "FFT Size", "8192")
-        set_default(template, "Window Function", "Hann")
-    except Exception:
-        pass
+    set_default(template, "FFT Size", "8192")
+    set_default(template, "Window Function", "Hann")
 
     audio_panel = tree.interface.new_panel(
         name="Audio",
@@ -2683,12 +2664,8 @@ def create_named_bands(named_map_group, named_meta_store_group, named_store_grou
     sample.width = 300
     sample.parent = frame_audio
     sample.location = (320, -100)
-
-    try:
-        set_default(sample, "FFT Size", "8192")
-        set_default(sample, "Window Function", "Hann")
-    except Exception:
-        pass
+    set_default(sample, "FFT Size", "8192")
+    set_default(sample, "Window Function", "Hann")
 
     connect_audio_settings(tree, audio_in, sample, time_node)
     link(tree, named_map, "Low Frequency", sample, "Low")
@@ -2729,10 +2706,7 @@ def create_named_bands(named_map_group, named_meta_store_group, named_store_grou
         query.width = 230
         query.parent = frame_query
         query.location = (270 + col * 260, 300 - row * 230)
-        try:
-            query.clamp = True
-        except Exception:
-            pass
+        query.clamp = True
         set_default(query, "Index", i)
 
         link(tree, meta_store, "Geometry", query, "Geometry")
@@ -3731,10 +3705,7 @@ def create_spectrum_fill():
     sample_position.parent = frame_strip
     sample_position.location = (470, -170)
     sample_position.width = 250
-    try:
-        sample_position.clamp = True
-    except Exception:
-        pass
+    sample_position.clamp = True
     link(tree, strip_in, "Spectrum Points", sample_position, "Geometry")
     link(tree, source_position, "Position", sample_position, "Value")
     link(tree, band_index, "Value", sample_position, "Index")
@@ -3807,10 +3778,7 @@ def create_spectrum_fill():
         node.parent = frame_attrs
         node.location = location
         node.width = 230
-        try:
-            node.clamp = True
-        except Exception:
-            pass
+        node.clamp = True
         link(tree, inp, "Spectrum Points", node, "Geometry")
         link(tree, attr_node, "Attribute", node, "Value")
         link(tree, band_index, "Value", node, "Index")
@@ -3869,11 +3837,8 @@ def create_spectrum_bars(analyzer_group):
 
     template = nodes.new("GeometryNodeSampleSoundFrequencies")
     template.name = "MENU TEMPLATE"
-    try:
-        set_default(template, "FFT Size", "8192")
-        set_default(template, "Window Function", "Hann")
-    except Exception:
-        pass
+    set_default(template, "FFT Size", "8192")
+    set_default(template, "Window Function", "Hann")
 
     profile_switch = menu_switch_geometry(
         nodes,
@@ -4169,11 +4134,7 @@ def create_spectrum_bars(analyzer_group):
     profile_path.label = "Unit Z Path"
     profile_path.parent = frame_profile
     profile_path.location = (520, -50)
-    if hasattr(profile_path, "mode"):
-        try:
-            profile_path.mode = "POINTS"
-        except Exception:
-            pass
+    profile_path.mode = "POINTS"
     set_default(profile_path, "Start", (0.0, 0.0, -0.5))
     set_default(profile_path, "End", (0.0, 0.0, 0.5))
 
