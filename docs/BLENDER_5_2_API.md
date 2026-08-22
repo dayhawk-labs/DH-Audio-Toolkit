@@ -103,6 +103,21 @@ The toolkit's verified defaults are:
 - `mode = "POINTS"` enables the `Start` and `End` inputs and disables
   `Direction` and `Length`.
 
+## Curve evaluation in regression tests
+
+- Curve components returned directly from a Geometry Nodes modifier on a mesh
+  object are not represented as vertices by `bpy.data.meshes.new_from_object`.
+- To inspect evaluated curve positions as mesh data, use:
+  - `GeometryNodeCurveToPoints` with `mode = "EVALUATED"`
+  - `GeometryNodePointsToVertices`
+- `GeometryNodeCurveToPoints` outputs `Points`, `Tangent`, `Normal`, and
+  `Rotation`. Its tested inputs are `Curve`, `Count`, and `Length`.
+- `GeometryNodePointsToVertices` accepts `Points` and `Selection`, and outputs
+  `Mesh`.
+- This explicit conversion is used by the regression suite to measure native
+  Catmull-Rom baseline undershoot without adding a tube profile that would
+  distort the measured minimum Z value.
+
 ## Mesh Grid indexing
 
 - Node identifier: `GeometryNodeMeshGrid`
