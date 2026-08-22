@@ -103,6 +103,46 @@ The toolkit's verified defaults are:
 - `mode = "POINTS"` enables the `Start` and `End` inputs and disables
   `Direction` and `Length`.
 
+## Domain Size
+
+- Node identifier: `GeometryNodeAttributeDomainSize`
+- The geometry component is selected through the writable `component` RNA
+  property. DH Audio Radial Spectrum uses `component = "MESH"`.
+- Input: `Geometry`.
+- Mesh outputs: `Point Count`, `Edge Count`, `Face Count`, and
+  `Face Corner Count`.
+- `Spline Count`, `Instance Count`, and `Layer Count` are present but disabled
+  when the component is `MESH`.
+- For a cyclic N-point radial layout, divide point Index by `Point Count` to
+  generate N unique angles. Dividing by `Point Count - 1` duplicates the first
+  and last positions when Sweep Angle is 360 degrees.
+
+## Set Spline Cyclic
+
+- Node identifier: `GeometryNodeSetSplineCyclic`
+- Inputs: `Curve`, `Selection`, and `Cyclic`; output: `Curve`.
+- `Cyclic` is a Boolean input socket, not a node RNA toggle.
+- In the eight-point radial prototype, a triangular-profile Curve to Mesh
+  produced 24 faces with Cyclic enabled and 21 faces when open. This confirms
+  that the node adds a real closing segment rather than merely overlapping
+  endpoint positions.
+- DH Audio Radial Spectrum first maps the carrier mesh, converts its edges with
+  `GeometryNodeMeshToCurve`, then applies Set Spline Cyclic. The mapped mesh
+  points remain available as a separate output.
+
+## Radial spectrum endpoint policy
+
+Use different denominators for cyclic layouts and open arcs:
+
+- Cyclic: `Index / max(Point Count, 1)` gives unique positions around the
+  sweep; Set Spline Cyclic supplies the final closing segment.
+- Open: `Index / max(Point Count - 1, 1)` places the first and final points
+  exactly on both requested angular endpoints.
+
+The `max(..., 1)` guards keep a one-point carrier finite. Mesh-to-curve and
+Set Position preserved the tested `dh_audio_amp`, `dh_audio_band_index`, and
+`dh_audio_band_pos` attributes.
+
 ## Curve evaluation in regression tests
 
 - Curve components returned directly from a Geometry Nodes modifier on a mesh

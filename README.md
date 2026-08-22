@@ -1,4 +1,4 @@
-DH AUDIO TOOLKIT 3.5.0
+DH AUDIO TOOLKIT 3.6.0
 
 Blender 5.2+
 
@@ -73,6 +73,16 @@ DH Audio Spectrum Points
 &#x20;   preserving all spectrum attributes. This is the standard modular source
 
 &#x20;   for Spectrum Curve and Spectrum Fill.
+
+
+
+DH Audio Radial Spectrum
+
+&#x20;   Maps Analyzer carriers or positioned Spectrum Points into circles, open
+
+&#x20;   arcs, and spirals. Audio can displace radius while source Z remains
+
+&#x20;   available as height. Outputs mapped points and an optional cyclic curve.
 
 
 
@@ -445,6 +455,61 @@ dh\_audio\_history\_pos = 0. The oldest retained row approaches Frames - 1 and
 Like Temporal Response, Spectrum History contains a Simulation Zone. Play the
 
 timeline sequentially or bake the simulation for complete frame history.
+
+
+
+
+======================================================================
+
+RECIPE 2C: RADIAL / SPIRAL SPECTRUM
+
+======================================================================
+
+
+
+&#x20;   DH Audio Analyzer \[Spectrum]
+
+&#x20;       -> DH Audio Radial Spectrum \[Spectrum]
+
+
+
+OR, for radial layout plus vertical audio height:
+
+
+
+&#x20;   DH Audio Analyzer \[Spectrum]
+
+&#x20;       -> DH Audio Spectrum Points \[Spectrum Points]
+
+&#x20;       -> DH Audio Radial Spectrum \[Spectrum]
+
+
+
+Defaults:
+
+&#x20;   Radius       = 3.0
+
+&#x20;   Audio Radius = 1.5
+
+&#x20;   Sweep Angle  = 360 degrees
+
+&#x20;   Cyclic       = On
+
+
+
+Use Spectrum Points for point/instance workflows. Curve converts source edges
+
+and closes the spline when Cyclic is enabled. Spiral adds radius from the first
+
+to final Band Position. Negative Sweep Angle reverses direction.
+
+
+
+Cyclic mode distributes N points across N unique angular positions and creates
+
+a true closing curve segment. Open mode distributes them across N - 1 intervals
+
+so the first and last points land exactly on both arc endpoints.
 
 
 
@@ -1070,6 +1135,16 @@ Spectrum history:
 
 
 
+Radial seam behavior:
+
+&#x20;   Inclusive 0-to-360 mapping duplicates the first and last point. Cyclic mode
+
+&#x20;   instead uses Point Index / Point Count and Set Spline Cyclic. Open arcs use
+
+&#x20;   Point Index / max(Point Count - 1, 1) so both endpoints remain exact.
+
+
+
 
 ======================================================================
 
@@ -1103,13 +1178,13 @@ These fit the current architecture without breaking it:
 
 
 
-&#x20;   Radial Spectrum Mapper
+&#x20;   Radial Extensions
 
-&#x20;       spectrum around a circle
+&#x20;       alternate orientation axes
 
-&#x20;       spiral
+&#x20;       radial bars and filled sectors
 
-&#x20;       polar displacement
+&#x20;       history spirals
 
 
 

@@ -30,7 +30,7 @@ import wave
 import bpy
 
 
-TOOLKIT_VERSION = "3.5.0"
+TOOLKIT_VERSION = "3.6.0"
 
 PUBLIC_GROUPS = {
     "DH Audio Analyzer": ("GeometryNodeTree", 330, "75e799e2-55ce-553a-8fdf-a74c5cf0de2c"),
@@ -43,6 +43,7 @@ PUBLIC_GROUPS = {
     "DH Audio Temporal Response": ("GeometryNodeTree", 310, "75e799e2-55ce-553a-8fdf-a74c5cf0de2c"),
     "DH Audio Spectrum History": ("GeometryNodeTree", 310, "de47b34b-1184-5bc8-84ac-3c5ada05f601"),
     "DH Audio Spectrum Points": ("GeometryNodeTree", 285, "bb4cca6c-c5d5-52c9-80fb-754adc068f91"),
+    "DH Audio Radial Spectrum": ("GeometryNodeTree", 315, "bb4cca6c-c5d5-52c9-80fb-754adc068f91"),
     "DH Audio Spectrum Bars": ("GeometryNodeTree", 350, "de47b34b-1184-5bc8-84ac-3c5ada05f601"),
     "DH Audio Spectrum Instances": ("GeometryNodeTree", 315, "de47b34b-1184-5bc8-84ac-3c5ada05f601"),
     "DH Audio Spectrum Curve": ("GeometryNodeTree", 310, "de47b34b-1184-5bc8-84ac-3c5ada05f601"),
@@ -126,6 +127,11 @@ EXPECTED_PANELS = {
     "DH Audio Spectrum History": {
         "Source": False,
         "History": False,
+        "Outputs": False,
+    },
+    "DH Audio Radial Spectrum": {
+        "Source": False,
+        "Radial Layout": False,
         "Outputs": False,
     },
     "DH Audio Material Reader": {
@@ -383,7 +389,7 @@ def _audit_interface(report):
     report.check("All internal groups generated", all(bpy.data.node_groups.get(name) for name in INTERNAL_GROUPS))
 
     asset_names = {tree.name for tree in bpy.data.node_groups if tree.asset_data}
-    report.check("Exactly 16 public assets", asset_names == set(PUBLIC_GROUPS), sorted(asset_names))
+    report.check("Exactly 17 public assets", asset_names == set(PUBLIC_GROUPS), sorted(asset_names))
 
     for name, (tree_type, width, catalog) in PUBLIC_GROUPS.items():
         tree = bpy.data.node_groups[name]
@@ -432,6 +438,14 @@ def _audit_interface(report):
         ("DH Audio Spectrum History", "Frames"): 32,
         ("DH Audio Spectrum History", "History Offset"): [0.0, -0.15, 0.0],
         ("DH Audio Spectrum History", "Reset"): False,
+        ("DH Audio Radial Spectrum", "Radius"): 3.0,
+        ("DH Audio Radial Spectrum", "Audio Radius"): 1.5,
+        ("DH Audio Radial Spectrum", "Spiral"): 0.0,
+        ("DH Audio Radial Spectrum", "Height Scale"): 1.0,
+        ("DH Audio Radial Spectrum", "Center"): [0.0, 0.0, 0.0],
+        ("DH Audio Radial Spectrum", "Start Angle"): 0.0,
+        ("DH Audio Radial Spectrum", "Sweep Angle"): math.tau,
+        ("DH Audio Radial Spectrum", "Cyclic"): True,
         ("DH Audio Shader Response", "Gain"): 1.0,
         ("DH Audio Shader Response", "Floor"): 0.0,
         ("DH Audio Shader Response", "Ceiling"): 0.8,
@@ -464,6 +478,7 @@ def _audit_interface(report):
         ("DH Audio Material Reader", "Use Instancer"),
         ("DH Audio Shader Response", "Clamp to 1"),
         ("DH Audio Spectrum History", "Reset"),
+        ("DH Audio Radial Spectrum", "Cyclic"),
     }
     for group_name, socket_name in boolean_inputs:
         item = _interface_socket(bpy.data.node_groups[group_name], socket_name)
@@ -834,6 +849,251 @@ def _test_spectrum_history(report):
     }
 
 
+def _test_radial_spectrum(report):
+    def build_source(name, count):
+        tree, _group_in, group_out = _new_geometry_tree(name)
+        line = tree.nodes.new("GeometryNodeMeshLine")
+        line.mode = "OFFSET"
+        _set_input(line, "Count", count)
+        _set_input(line, "Offset", (1.0, 0.0, 0.0))
+        index = tree.nodes.new("GeometryNodeInputIndex")
+        position = tree.nodes.new("ShaderNodeMath")
+        position.operation = "DIVIDE"
+        _set_input(position, 1, float(max(count - 1, 1)))
+        tree.links.new(_socket(index.outputs, "Index"), _socket(position.inputs, 0))
+
+        height = tree.nodes.new("ShaderNodeMath")
+        height.operation = "MULTIPLY"
+        _set_input(height, 1, 0.75)
+        tree.links.new(_socket(position.outputs, "Value"), _socket(height.inputs, 0))
+        height_vector = tree.nodes.new("ShaderNodeCombineXYZ")
+        tree.links.new(_socket(height.outputs, "Value"), _socket(height_vector.inputs, "Z"))
+        set_position = tree.nodes.new("GeometryNodeSetPosition")
+        tree.links.new(_socket(line.outputs, "Mesh"), _socket(set_position.inputs, "Geometry"))
+        tree.links.new(_socket(height_vector.outputs, "Vector"), _socket(set_position.inputs, "Offset"))
+
+        band_index = _store_attribute(
+            tree,
+            _socket(set_position.outputs, "Geometry"),
+            _socket(index.outputs, "Index"),
+            "dh_audio_band_index",
+            "INT",
+        )
+        band_position = _store_attribute(
+            tree,
+            _socket(band_index.outputs, "Geometry"),
+            _socket(position.outputs, "Value"),
+            "dh_audio_band_pos",
+        )
+        amplitude = _store_attribute(
+            tree,
+            _socket(band_position.outputs, "Geometry"),
+            _socket(position.outputs, "Value"),
+            "dh_audio_amp",
+        )
+        tree.links.new(_socket(amplitude.outputs, "Geometry"), _socket(group_out.inputs, "Geometry"))
+        return tree
+
+    def build_host(
+        name,
+        source,
+        *,
+        cyclic,
+        sweep,
+        center=(0.0, 0.0, 0.0),
+        height_scale=1.0,
+        audio_radius=0.0,
+        spiral=0.0,
+        curve_output=False,
+        store_fields=False,
+    ):
+        tree, _group_in, group_out = _new_geometry_tree(name)
+        source_node = tree.nodes.new("GeometryNodeGroup")
+        source_node.node_tree = source
+        radial = _group_node(tree, "DH Audio Radial Spectrum")
+        _set_input(radial, "Radius", 2.0)
+        _set_input(radial, "Audio Radius", audio_radius)
+        _set_input(radial, "Spiral", spiral)
+        _set_input(radial, "Height Scale", height_scale)
+        _set_input(radial, "Center", center)
+        _set_input(radial, "Start Angle", 0.0)
+        _set_input(radial, "Sweep Angle", sweep)
+        _set_input(radial, "Cyclic", cyclic)
+        tree.links.new(_socket(source_node.outputs, "Geometry"), _socket(radial.inputs, "Spectrum"))
+
+        if curve_output:
+            profile = tree.nodes.new("GeometryNodeCurvePrimitiveCircle")
+            _set_input(profile, "Resolution", 3)
+            _set_input(profile, "Radius", 0.05)
+            tube = tree.nodes.new("GeometryNodeCurveToMesh")
+            tree.links.new(_socket(radial.outputs, "Curve"), _socket(tube.inputs, "Curve"))
+            tree.links.new(_socket(profile.outputs, "Curve"), _socket(tube.inputs, "Profile Curve"))
+            geometry = _socket(tube.outputs, "Mesh")
+        else:
+            geometry = _socket(radial.outputs, "Spectrum Points")
+
+        if store_fields:
+            angle_store = _store_attribute(
+                tree,
+                geometry,
+                _socket(radial.outputs, "Angle"),
+                "dh_test_radial_angle",
+            )
+            radius_store = _store_attribute(
+                tree,
+                _socket(angle_store.outputs, "Geometry"),
+                _socket(radial.outputs, "Mapped Radius"),
+                "dh_test_radial_radius",
+            )
+            geometry = _socket(radius_store.outputs, "Geometry")
+
+        tree.links.new(geometry, _socket(group_out.inputs, "Geometry"))
+        return _new_host(name + " Host", tree)
+
+    source = build_source("DH Test Radial Source", 8)
+    cyclic_obj = build_host(
+        "DH Test Radial Cyclic",
+        source,
+        cyclic=True,
+        sweep=math.tau,
+        audio_radius=1.0,
+        spiral=2.0,
+        store_fields=True,
+    )
+    cyclic = _snapshot(cyclic_obj)
+    attrs = cyclic["attributes"]
+    unique_xy = {
+        (round(vertex[0], 5), round(vertex[1], 5))
+        for vertex in cyclic["vertices"]
+    }
+    angles = attrs.get("dh_test_radial_angle", [])
+    sorted_angles = sorted(angles)
+    gaps = [
+        sorted_angles[index + 1] - sorted_angles[index]
+        for index in range(len(sorted_angles) - 1)
+    ]
+    if sorted_angles:
+        gaps.append(math.tau - sorted_angles[-1] + sorted_angles[0])
+
+    expected_positions = [index / 7.0 for index in range(8)]
+    expected_radii = [2.0 + 3.0 * position for position in expected_positions]
+    actual_radii = attrs.get("dh_test_radial_radius", [])
+    xy_radii = [math.hypot(vertex[0], vertex[1]) for vertex in cyclic["vertices"]]
+    report.check(
+        "Radial Spectrum cyclic layout has unique evenly spaced seam",
+        (
+            len(cyclic["vertices"]) == 8
+            and len(unique_xy) == 8
+            and len(gaps) == 8
+            and all(abs(gap - math.tau / 8.0) < 1e-5 for gap in gaps)
+        ),
+        {"unique_xy": len(unique_xy), "angle_gaps": gaps},
+    )
+    report.check(
+        "Radial Spectrum preserves source attributes",
+        (
+            attrs.get("dh_audio_band_index") == list(range(8))
+            and all(
+                abs(a - b) < 1e-6
+                for a, b in zip(attrs.get("dh_audio_band_pos", ()), expected_positions)
+            )
+            and all(
+                abs(a - b) < 1e-6
+                for a, b in zip(attrs.get("dh_audio_amp", ()), expected_positions)
+            )
+        ),
+    )
+    report.check(
+        "Radial Spectrum audio/spiral radius and output fields agree",
+        (
+            len(actual_radii) == 8
+            and all(abs(a - b) < 1e-5 for a, b in zip(actual_radii, expected_radii))
+            and all(abs(a - b) < 1e-5 for a, b in zip(xy_radii, expected_radii))
+            and all(abs(a - b) < 1e-5 for a, b in zip(angles, [index * math.tau / 8.0 for index in range(8)]))
+        ),
+        {"field_radii": actual_radii, "xy_radii": xy_radii},
+    )
+
+    open_obj = build_host(
+        "DH Test Radial Open Arc",
+        source,
+        cyclic=False,
+        sweep=math.pi,
+        center=(1.0, -2.0, 3.0),
+        height_scale=2.0,
+    )
+    open_arc = _snapshot(open_obj)
+    first = open_arc["vertices"][0]
+    last = open_arc["vertices"][-1]
+    report.check(
+        "Radial Spectrum open arc includes both endpoints and preserves height",
+        (
+            all(abs(a - b) < 1e-5 for a, b in zip(first, (3.0, -2.0, 3.0)))
+            and all(abs(a - b) < 1e-5 for a, b in zip(last, (-1.0, -2.0, 4.5)))
+        ),
+        {"first": first, "last": last},
+    )
+
+    cyclic_curve = _snapshot(build_host(
+        "DH Test Radial Cyclic Curve",
+        source,
+        cyclic=True,
+        sweep=math.tau,
+        curve_output=True,
+    ))
+    open_curve = _snapshot(build_host(
+        "DH Test Radial Open Curve",
+        source,
+        cyclic=False,
+        sweep=math.pi,
+        curve_output=True,
+    ))
+    report.check(
+        "Radial Spectrum Curve output closes only in Cyclic mode",
+        cyclic_curve["faces"] == 24 and open_curve["faces"] == 21,
+        {"cyclic_faces": cyclic_curve["faces"], "open_faces": open_curve["faces"]},
+    )
+
+    single_source = build_source("DH Test Radial Single Source", 1)
+    single = _snapshot(build_host(
+        "DH Test Radial Single Band",
+        single_source,
+        cyclic=False,
+        sweep=math.pi,
+    ))
+    report.check(
+        "Radial Spectrum one-band layout is finite",
+        (
+            len(single["vertices"]) == 1
+            and all(math.isfinite(value) for value in single["vertices"][0])
+        ),
+        single["vertices"],
+    )
+
+    radial_tree = bpy.data.node_groups["DH Audio Radial Spectrum"]
+    domain_size = radial_tree.nodes.get("Spectrum Domain Size")
+    cyclic_node = radial_tree.nodes.get("Set Radial Curve Cyclic")
+    report.check(
+        "Radial Spectrum uses Blender 5.2 domain-size and cyclic-curve nodes",
+        (
+            domain_size is not None
+            and domain_size.bl_idname == "GeometryNodeAttributeDomainSize"
+            and domain_size.component == "MESH"
+            and cyclic_node is not None
+            and cyclic_node.bl_idname == "GeometryNodeSetSplineCyclic"
+        ),
+    )
+
+    report.observations["radial_spectrum"] = {
+        "cyclic_unique_xy": len(unique_xy),
+        "cyclic_angle_gaps": gaps,
+        "open_arc_first": first,
+        "open_arc_last": last,
+        "curve_faces": {"cyclic": cyclic_curve["faces"], "open": open_curve["faces"]},
+        "seam_policy": "Cyclic uses Index / Point Count; open arcs use Index / max(Point Count - 1, 1).",
+    }
+
+
 def _test_bands(report, sound):
     tree, _group_in, group_out = _new_geometry_tree("DH Test Bands")
     bands = _group_node(tree, "DH Audio Bands")
@@ -1104,7 +1364,7 @@ def run_validation(repo_root=None, release_path=None, report_path=None):
 
         report.check("Repeated build structural signature", first_signature == second_signature, {"first": first_signature, "second": second_signature})
         report.check("Repeated build catalog bytes", first_catalog == second_catalog, hashlib.sha256(second_catalog).hexdigest())
-        report.check("Exactly 20 generated groups", len([tree for tree in bpy.data.node_groups if tree.name in PUBLIC_GROUPS or tree.name in INTERNAL_GROUPS]) == 20, len(bpy.data.node_groups))
+        report.check("Exactly 21 generated groups", len([tree for tree in bpy.data.node_groups if tree.name in PUBLIC_GROUPS or tree.name in INTERNAL_GROUPS]) == 21, len(bpy.data.node_groups))
         handler_count = sum(1 for handler in bpy.app.handlers.save_post if getattr(handler, "__name__", "") == "_dh_audio_write_catalogs_on_save")
         report.check("Exactly one toolkit save handler", handler_count == 1, handler_count)
 
@@ -1118,6 +1378,7 @@ def run_validation(repo_root=None, release_path=None, report_path=None):
         report.section("Analyzer tests completed", lambda: _test_analyzer(report, sound))
         report.section("Temporal Response tests completed", lambda: _test_temporal_response(report))
         report.section("Spectrum History tests completed", lambda: _test_spectrum_history(report))
+        report.section("Radial Spectrum tests completed", lambda: _test_radial_spectrum(report))
         report.section("Named-band tests completed", lambda: _test_bands(report, sound))
         report.section("Sample Range and Band Query tests completed", lambda: _test_sample_range_and_query(report, sound))
         report.section("Visualizer tests completed", lambda: _test_visualizers(report, sound))
@@ -1128,8 +1389,8 @@ def run_validation(repo_root=None, release_path=None, report_path=None):
         release = _clean_release(repo_root, release_path)
         report.observations["release"] = release
         report.check("Release contains no scene objects", release["objects"] == 0, release)
-        report.check("Release contains 20 generated groups", release["node_groups"] == 20, release)
-        report.check("Release contains 16 public assets", release["assets"] == 16, release)
+        report.check("Release contains 21 generated groups", release["node_groups"] == 21, release)
+        report.check("Release contains 17 public assets", release["assets"] == 17, release)
         report.check("Internal groups are not assets", not release["internal_assets"], release["internal_assets"])
         report.check("Release catalog sidecar exists", Path(release["catalog_path"]).is_file(), release["catalog_path"])
         report.check("Release repeat-build is deterministic", release["repeat_build_deterministic"], release)

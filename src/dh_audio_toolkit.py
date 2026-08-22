@@ -3,8 +3,13 @@ import re
 import os
 
 # =====================================================================
-# DH AUDIO TOOLKIT 3.5.0
+# DH AUDIO TOOLKIT 3.6.0
 # Blender 5.2+
+#
+# 3.6.0:
+# - Added DH Audio Radial Spectrum for circular, arc, and spiral layouts.
+# - Cyclic mapping uses unique angular positions and a true cyclic curve,
+#   avoiding the duplicate endpoint seam produced by inclusive 0..360 mapping.
 #
 # 3.5.0:
 # - Added DH Audio Spectrum History for bounded simulation-zone waterfall rows.
@@ -46,6 +51,7 @@ import os
 #   - DH Audio Response
 #   - DH Audio Temporal Response
 #   - DH Audio Spectrum History
+#   - DH Audio Radial Spectrum
 #   - DH Audio Frequency Map
 #   - DH Audio Frequency Selection
 #   - DH Audio Analyzer
@@ -95,7 +101,7 @@ import os
 # - Material Reader can switch between Geometry and Instancer lookup.
 # =====================================================================
 
-TOOLKIT_VERSION = "3.5.0"
+TOOLKIT_VERSION = "3.6.0"
 BLENDER_MIN_VERSION = (5, 2, 0)
 
 REBUILD_EXISTING = True
@@ -111,6 +117,7 @@ REMOVE_LEGACY_GROUPS = False
 GROUP_RESPONSE = "DH Audio Response"
 GROUP_TEMPORAL = "DH Audio Temporal Response"
 GROUP_HISTORY = "DH Audio Spectrum History"
+GROUP_RADIAL = "DH Audio Radial Spectrum"
 GROUP_FREQ_MAP = "DH Audio Frequency Map"
 GROUP_FREQ_SELECT = "DH Audio Frequency Selection"
 GROUP_ANALYZER = "DH Audio Analyzer"
@@ -145,6 +152,7 @@ ASSET_CATALOG_PATHS = {
     GROUP_RANGE: "Geometry Nodes/DH Audio/Analysis",
     GROUP_FREQ_MAP: "Geometry Nodes/DH Audio/Mapping",
     GROUP_POINTS: "Geometry Nodes/DH Audio/Mapping",
+    GROUP_RADIAL: "Geometry Nodes/DH Audio/Mapping",
     GROUP_QUERY: "Geometry Nodes/DH Audio/Query",
     GROUP_FREQ_SELECT: "Geometry Nodes/DH Audio/Query",
     GROUP_BARS: "Geometry Nodes/DH Audio/Visualizers",
@@ -166,6 +174,7 @@ PUBLIC_GROUP_WIDTHS = {
     GROUP_RANGE: 315,
     GROUP_FREQ_MAP: 300,
     GROUP_POINTS: 285,
+    GROUP_RADIAL: 315,
     GROUP_QUERY: 285,
     GROUP_FREQ_SELECT: 280,
     GROUP_BARS: 350,
@@ -204,6 +213,7 @@ CANONICAL_GROUPS = [
     GROUP_RESPONSE,
     GROUP_TEMPORAL,
     GROUP_HISTORY,
+    GROUP_RADIAL,
     GROUP_MATERIAL_READER,
     GROUP_SHADER_RESPONSE,
     INTERNAL_STORE_SPECTRUM,
@@ -3658,7 +3668,405 @@ def create_spectrum_points():
 
 
 # =====================================================================
-# 8. DH Audio Spectrum Instances
+# 9. DH Audio Radial Spectrum
+# =====================================================================
+
+def create_radial_spectrum():
+    """Map spectrum carrier geometry into circular, arc, or spiral layouts."""
+    tree = bpy.data.node_groups.new(GROUP_RADIAL, "GeometryNodeTree")
+    tree["dh_role"] = "radial_spectrum"
+
+    source_panel = tree.interface.new_panel(
+        name="Source",
+        description="Spectrum carrier or positioned spectrum points",
+        default_closed=False,
+    )
+    layout_panel = tree.interface.new_panel(
+        name="Radial Layout",
+        description="Circle, arc, spiral, height, and center controls",
+        default_closed=False,
+    )
+    output_panel = tree.interface.new_panel(
+        name="Outputs",
+        description="Mapped points, ready-to-use curve, and layout fields",
+        default_closed=False,
+    )
+
+    new_socket(
+        tree, "Spectrum", "INPUT", "NodeSocketGeometry",
+        parent=source_panel,
+        description=(
+            f"Spectrum carrier from {GROUP_ANALYZER}, {GROUP_POINTS}, "
+            f"or {GROUP_BARS} Spectrum Points"
+        ),
+    )
+    new_socket(
+        tree, "Radius", "INPUT", "NodeSocketFloatDistance",
+        parent=layout_panel,
+        default=3.0,
+        min_value=0.0,
+        max_value=100000.0,
+        description="Base radius before audio and spiral displacement",
+        structure_type="SINGLE",
+    )
+    new_socket(
+        tree, "Audio Radius", "INPUT", "NodeSocketFloatDistance",
+        parent=layout_panel,
+        default=1.5,
+        min_value=-100000.0,
+        max_value=100000.0,
+        description="Radial displacement added at dh_audio_amp = 1",
+        structure_type="SINGLE",
+    )
+    new_socket(
+        tree, "Spiral", "INPUT", "NodeSocketFloatDistance",
+        parent=layout_panel,
+        default=0.0,
+        min_value=-100000.0,
+        max_value=100000.0,
+        description="Radius added from the first to final dh_audio_band_pos",
+        structure_type="SINGLE",
+    )
+    new_socket(
+        tree, "Height Scale", "INPUT", "NodeSocketFloat",
+        parent=layout_panel,
+        default=1.0,
+        min_value=-10000.0,
+        max_value=10000.0,
+        description="Scale the source Z position before adding Center",
+        structure_type="SINGLE",
+    )
+    new_socket(
+        tree, "Center", "INPUT", "NodeSocketVector",
+        parent=layout_panel,
+        default=(0.0, 0.0, 0.0),
+        description="Center of the radial layout",
+        structure_type="SINGLE",
+    )
+    new_socket(
+        tree, "Start Angle", "INPUT", "NodeSocketFloatAngle",
+        parent=layout_panel,
+        default=0.0,
+        min_value=-1000.0,
+        max_value=1000.0,
+        description="Angle of the first spectrum point",
+        structure_type="SINGLE",
+    )
+    new_socket(
+        tree, "Sweep Angle", "INPUT", "NodeSocketFloatAngle",
+        parent=layout_panel,
+        default=6.283185307179586,
+        min_value=-1000.0,
+        max_value=1000.0,
+        description="Total angular span. Use a negative angle for clockwise order",
+        structure_type="SINGLE",
+    )
+    new_socket(
+        tree, "Cyclic", "INPUT", "NodeSocketBool",
+        parent=layout_panel,
+        default=True,
+        description=(
+            "Use unique cyclic spacing and close the Curve output. "
+            "Disable for an open arc that includes both angular endpoints"
+        ),
+        structure_type="SINGLE",
+    )
+
+    new_socket(
+        tree, "Spectrum Points", "OUTPUT", "NodeSocketGeometry",
+        parent=output_panel,
+        description="Mapped mesh points preserving source topology and attributes",
+    )
+    new_socket(
+        tree, "Curve", "OUTPUT", "NodeSocketGeometry",
+        parent=output_panel,
+        description="Mesh edges converted to a curve and closed when Cyclic is enabled",
+    )
+    new_socket(
+        tree, "Amplitude", "OUTPUT", "NodeSocketFloat",
+        parent=output_panel,
+        description="Preserved dh_audio_amp field",
+        structure_type="FIELD",
+    )
+    new_socket(
+        tree, "Band Index", "OUTPUT", "NodeSocketInt",
+        parent=output_panel,
+        description="Preserved dh_audio_band_index field",
+        structure_type="FIELD",
+    )
+    new_socket(
+        tree, "Band Position", "OUTPUT", "NodeSocketFloat",
+        parent=output_panel,
+        description="Preserved dh_audio_band_pos field",
+        structure_type="FIELD",
+    )
+    new_socket(
+        tree, "Angle", "OUTPUT", "NodeSocketFloatAngle",
+        parent=output_panel,
+        description="Calculated angular position field",
+        structure_type="FIELD",
+    )
+    new_socket(
+        tree, "Mapped Radius", "OUTPUT", "NodeSocketFloatDistance",
+        parent=output_panel,
+        description="Calculated base + audio + spiral radius field",
+        structure_type="FIELD",
+    )
+
+    nodes = tree.nodes
+    group_out = nodes.new("NodeGroupOutput")
+    group_out.location = (1860, 120)
+    group_out.width = 260
+    group_out.is_active_output = True
+
+    frame_angle = make_frame(
+        nodes, "FRAME_ANGLE", "1  UNIQUE CYCLIC / OPEN ARC ANGLES",
+        (-1180, 700), 1120,
+    )
+    frame_radius = make_frame(
+        nodes, "FRAME_RADIUS", "2  AUDIO + SPIRAL RADIUS",
+        (-1180, -120), 1120,
+    )
+    frame_position = make_frame(
+        nodes, "FRAME_POSITION", "3  RADIAL POSITION + CURVE",
+        (40, 700), 1540,
+    )
+
+    angle_in = local_group_input(
+        nodes, "Angle Layout",
+        ["Spectrum", "Start Angle", "Sweep Angle", "Cyclic"],
+        parent=frame_angle,
+        location=(20, 140),
+        width=230,
+    )
+
+    domain_size = nodes.new("GeometryNodeAttributeDomainSize")
+    domain_size.name = "Spectrum Domain Size"
+    domain_size.label = "Spectrum Point Count"
+    domain_size.component = "MESH"
+    domain_size.parent = frame_angle
+    domain_size.location = (280, 310)
+    link(tree, angle_in, "Spectrum", domain_size, "Geometry")
+
+    point_index = nodes.new("GeometryNodeInputIndex")
+    point_index.name = "Radial Point Index"
+    point_index.label = "Point Index"
+    point_index.parent = frame_angle
+    point_index.location = (280, 70)
+
+    count_minus_one = integer_math_node(
+        nodes, "Open Arc Span", "SUBTRACT", (510, 310),
+        frame_angle, "Point Count - 1",
+    )
+    set_default(count_minus_one, 1, 1)
+    link(tree, domain_size, "Point Count", count_minus_one, 0)
+
+    safe_open_count = integer_math_node(
+        nodes, "Safe Open Arc Span", "MAXIMUM", (730, 310),
+        frame_angle, "Max(Count - 1, 1)",
+    )
+    set_default(safe_open_count, 1, 1)
+    link(tree, count_minus_one, "Value", safe_open_count, 0)
+
+    safe_cyclic_count = integer_math_node(
+        nodes, "Safe Cyclic Count", "MAXIMUM", (510, 140),
+        frame_angle, "Max(Point Count, 1)",
+    )
+    set_default(safe_cyclic_count, 1, 1)
+    link(tree, domain_size, "Point Count", safe_cyclic_count, 0)
+
+    denominator = nodes.new("GeometryNodeSwitch")
+    denominator.name = "Cyclic Angle Denominator"
+    denominator.label = "Open Span / Cyclic Count"
+    denominator.input_type = "INT"
+    denominator.parent = frame_angle
+    denominator.location = (760, 120)
+    link(tree, angle_in, "Cyclic", denominator, "Switch")
+    link(tree, safe_open_count, "Value", denominator, "False")
+    link(tree, safe_cyclic_count, "Value", denominator, "True")
+
+    angle_fraction = math_node(
+        nodes, "Angular Fraction", "DIVIDE", (950, 120),
+        frame_angle, "Index / Angular Span",
+    )
+    link(tree, point_index, "Index", angle_fraction, 0)
+    link(tree, denominator, "Output", angle_fraction, 1)
+
+    swept_angle = math_node(
+        nodes, "Swept Angle", "MULTIPLY", (950, -80),
+        frame_angle, "Fraction x Sweep",
+    )
+    link(tree, angle_fraction, "Value", swept_angle, 0)
+    link(tree, angle_in, "Sweep Angle", swept_angle, 1)
+
+    angle = math_node(
+        nodes, "Mapped Angle", "ADD", (950, -260),
+        frame_angle, "Start + Swept Angle",
+    )
+    link(tree, angle_in, "Start Angle", angle, 0)
+    link(tree, swept_angle, "Value", angle, 1)
+
+    radius_in = local_group_input(
+        nodes, "Radius Layout",
+        ["Radius", "Audio Radius", "Spiral"],
+        parent=frame_radius,
+        location=(20, 130),
+        width=230,
+    )
+    amplitude = named_attribute_node(
+        nodes, "dh_audio_amp", "FLOAT",
+        parent=frame_radius, location=(280, 300), label="Amplitude",
+    )
+    amplitude.name = "Radial Amplitude"
+    band_position = named_attribute_node(
+        nodes, "dh_audio_band_pos", "FLOAT",
+        parent=frame_radius, location=(280, 40), label="Band Position",
+    )
+    band_position.name = "Radial Band Position"
+
+    audio_displacement = math_node(
+        nodes, "Audio Radius Displacement", "MULTIPLY", (520, 300),
+        frame_radius, "Amplitude x Audio Radius",
+    )
+    link(tree, amplitude, "Attribute", audio_displacement, 0)
+    link(tree, radius_in, "Audio Radius", audio_displacement, 1)
+
+    spiral_displacement = math_node(
+        nodes, "Spiral Radius Displacement", "MULTIPLY", (520, 40),
+        frame_radius, "Band Position x Spiral",
+    )
+    link(tree, band_position, "Attribute", spiral_displacement, 0)
+    link(tree, radius_in, "Spiral", spiral_displacement, 1)
+
+    radius_with_audio = math_node(
+        nodes, "Radius with Audio", "ADD", (750, 300),
+        frame_radius, "Base + Audio",
+    )
+    link(tree, radius_in, "Radius", radius_with_audio, 0)
+    link(tree, audio_displacement, "Value", radius_with_audio, 1)
+
+    mapped_radius = math_node(
+        nodes, "Mapped Radius", "ADD", (950, 170),
+        frame_radius, "Base + Audio + Spiral",
+    )
+    link(tree, radius_with_audio, "Value", mapped_radius, 0)
+    link(tree, spiral_displacement, "Value", mapped_radius, 1)
+
+    position_in = local_group_input(
+        nodes, "Position Layout",
+        ["Spectrum", "Height Scale", "Center", "Cyclic"],
+        parent=frame_position,
+        location=(20, 110),
+        width=230,
+    )
+
+    cosine = math_node(
+        nodes, "Angle Cosine", "COSINE", (280, 380),
+        frame_position, "cos(Angle)",
+    )
+    sine = math_node(
+        nodes, "Angle Sine", "SINE", (280, 180),
+        frame_position, "sin(Angle)",
+    )
+    link(tree, angle, "Value", cosine, 0)
+    link(tree, angle, "Value", sine, 0)
+
+    radial_x = math_node(
+        nodes, "Radial X", "MULTIPLY", (500, 380),
+        frame_position, "Cosine x Radius",
+    )
+    radial_y = math_node(
+        nodes, "Radial Y", "MULTIPLY", (500, 180),
+        frame_position, "Sine x Radius",
+    )
+    link(tree, cosine, "Value", radial_x, 0)
+    link(tree, mapped_radius, "Value", radial_x, 1)
+    link(tree, sine, "Value", radial_y, 0)
+    link(tree, mapped_radius, "Value", radial_y, 1)
+
+    source_position = nodes.new("GeometryNodeInputPosition")
+    source_position.name = "Source Height Position"
+    source_position.label = "Source Position"
+    source_position.parent = frame_position
+    source_position.location = (280, -80)
+    separate_position = nodes.new("ShaderNodeSeparateXYZ")
+    separate_position.name = "Source Position Components"
+    separate_position.parent = frame_position
+    separate_position.location = (500, -80)
+    link(tree, source_position, "Position", separate_position, "Vector")
+
+    scaled_height = math_node(
+        nodes, "Scaled Source Height", "MULTIPLY", (710, -80),
+        frame_position, "Source Z x Height Scale",
+    )
+    link(tree, separate_position, "Z", scaled_height, 0)
+    link(tree, position_in, "Height Scale", scaled_height, 1)
+
+    combine_position = nodes.new("ShaderNodeCombineXYZ")
+    combine_position.name = "Radial Position"
+    combine_position.label = "X / Y / Source Height"
+    combine_position.parent = frame_position
+    combine_position.location = (710, 260)
+    link(tree, radial_x, "Value", combine_position, "X")
+    link(tree, radial_y, "Value", combine_position, "Y")
+    link(tree, scaled_height, "Value", combine_position, "Z")
+
+    add_center = vector_math_node(
+        nodes, "Add Radial Center", "ADD", (930, 260),
+        frame_position, "Position + Center",
+    )
+    link(tree, combine_position, "Vector", add_center, 0)
+    link(tree, position_in, "Center", add_center, 1)
+
+    set_position = nodes.new("GeometryNodeSetPosition")
+    set_position.name = "Set Radial Spectrum Position"
+    set_position.label = "Radial Spectrum Points"
+    set_position.parent = frame_position
+    set_position.location = (1140, 260)
+    set_position.width = 230
+    link(tree, position_in, "Spectrum", set_position, "Geometry")
+    link(tree, add_center, "Vector", set_position, "Position")
+
+    mesh_to_curve = nodes.new("GeometryNodeMeshToCurve")
+    mesh_to_curve.name = "Radial Points to Curve"
+    mesh_to_curve.label = "Spectrum Edges to Curve"
+    mesh_to_curve.parent = frame_position
+    mesh_to_curve.location = (1140, 20)
+    link(tree, set_position, "Geometry", mesh_to_curve, "Mesh")
+
+    set_cyclic = nodes.new("GeometryNodeSetSplineCyclic")
+    set_cyclic.name = "Set Radial Curve Cyclic"
+    set_cyclic.label = "Open / Cyclic Curve"
+    set_cyclic.parent = frame_position
+    set_cyclic.location = (1350, 20)
+    link(tree, mesh_to_curve, "Curve", set_cyclic, "Curve")
+    link(tree, position_in, "Cyclic", set_cyclic, "Cyclic")
+
+    band_index = named_attribute_node(
+        nodes, "dh_audio_band_index", "INT",
+        location=(1590, -160), label="Band Index Output",
+    )
+    band_index.name = "Radial Band Index Output"
+
+    link(tree, set_position, "Geometry", group_out, "Spectrum Points")
+    link(tree, set_cyclic, "Curve", group_out, "Curve")
+    link(tree, amplitude, "Attribute", group_out, "Amplitude")
+    link(tree, band_index, "Attribute", group_out, "Band Index")
+    link(tree, band_position, "Attribute", group_out, "Band Position")
+    link(tree, angle, "Value", group_out, "Angle")
+    link(tree, mapped_radius, "Value", group_out, "Mapped Radius")
+
+    mark_asset(
+        tree,
+        "Map DH Audio spectrum carrier geometry into circular, open-arc, or "
+        "spiral layouts. Preserves spectrum attributes, supports radial audio "
+        "displacement and source height, and outputs a correctly closed cyclic curve."
+    )
+    return tree
+
+
+# =====================================================================
+# 10. DH Audio Spectrum Instances
 # =====================================================================
 
 def create_spectrum_instances():
@@ -4814,6 +5222,11 @@ DH Audio Spectrum Points
     preserving all spectrum attributes. This is the standard modular source
     for Spectrum Curve and Spectrum Fill.
 
+DH Audio Radial Spectrum
+    Maps Analyzer carriers or positioned Spectrum Points into circles, open
+    arcs, and spirals. Audio can displace radius while source Z remains
+    available as height. Outputs mapped points and an optional cyclic curve.
+
 DH Audio Spectrum Bars
     Standalone visualizer with Analyzer built in. Creates bars using Box,
     Round, Cone, Icosphere, Custom Profile, or Custom Geometry. Also exposes
@@ -5000,6 +5413,35 @@ dh_audio_history_pos = 0. The oldest retained row approaches Frames - 1 and
 
 Like Temporal Response, Spectrum History contains a Simulation Zone. Play the
 timeline sequentially or bake the simulation for complete frame history.
+
+
+======================================================================
+RECIPE 2C: RADIAL / SPIRAL SPECTRUM
+======================================================================
+
+    DH Audio Analyzer [Spectrum]
+        -> DH Audio Radial Spectrum [Spectrum]
+
+OR, for radial layout plus vertical audio height:
+
+    DH Audio Analyzer [Spectrum]
+        -> DH Audio Spectrum Points [Spectrum Points]
+        -> DH Audio Radial Spectrum [Spectrum]
+
+Defaults:
+    Radius       = 3.0
+    Audio Radius = 1.5
+    Sweep Angle  = 360 degrees
+    Cyclic       = On
+
+Use the Spectrum Points output for point/instance workflows. The Curve output
+converts source edges and closes the spline when Cyclic is enabled. Spiral adds
+radius from the first to final Band Position. Negative Sweep Angle reverses the
+direction.
+
+Cyclic mode distributes N points across N unique angular positions and creates
+a true closing curve segment. Open mode distributes them across N - 1 intervals
+so the first and last points land exactly on both arc endpoints.
 
 
 ======================================================================
@@ -5312,6 +5754,11 @@ Spectrum history:
     copies of the input. Rows retain independent topology when band counts
     change, and Reset keeps only the current row.
 
+Radial seam behavior:
+    Inclusive 0-to-360 mapping duplicates the first and last point. Cyclic mode
+    instead uses Point Index / Point Count and Set Spline Cyclic. Open arcs use
+    Point Index / max(Point Count - 1, 1) so both endpoints remain exact.
+
 
 ======================================================================
 GOOD NEXT ADDITIONS
@@ -5329,10 +5776,10 @@ These fit the current architecture without breaking it:
         age-based row decimation
         alternate history layouts
 
-    Radial Spectrum Mapper
-        spectrum around a circle
-        spiral
-        polar displacement
+    Radial Extensions
+        alternate orientation axes
+        radial bars and filled sectors
+        history spirals
 
     Frequency Selection Utilities
         band masks
@@ -5440,6 +5887,7 @@ def main():
 
     analyzer = create_analyzer(response, frequency_map, store_spectrum)
     spectrum_points = create_spectrum_points()
+    radial_spectrum = create_radial_spectrum()
     query = create_band_query()
     sample_range = create_sample_range(response)
     named_bands = create_named_bands(named_map, named_meta_store, named_store)
@@ -5469,6 +5917,7 @@ def main():
         frequency_selection,
         analyzer,
         spectrum_points,
+        radial_spectrum,
         query,
         sample_range,
         named_bands,
@@ -5487,6 +5936,7 @@ def main():
     print()
     print("Architecture:")
     print("  Analyzer Spectrum -> Spectrum Points -> Curve / Fill")
+    print("  Analyzer / Points -> Radial Spectrum -> cyclic curve / custom consumers")
     print("  Analyzer Spectrum -> Temporal Response -> downstream consumers")
     print("  Spectrum Points   -> Spectrum History -> waterfall rows / custom surfaces")
     print("  Analyzer Spectrum -> Frequency Selection -> downstream Selection inputs")
