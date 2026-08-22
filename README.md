@@ -1,4 +1,4 @@
-DH AUDIO TOOLKIT 3.8.0
+DH AUDIO TOOLKIT 3.8.1
 
 Blender 5.2+
 

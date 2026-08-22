@@ -18,7 +18,7 @@ To create a clean asset-library build after the tests pass:
 & "C:\path\to\Blender 5.2\blender.exe" --background --factory-startup `
   --python tests/blender_52_regression.py -- `
   --report temp/blender_52_report.json `
-  --release "releases/DH Audio Toolkit 3.8.0.blend"
+  --release "releases/DH Audio Toolkit 3.8.1.blend"
 ```
 
 The release file is rebuilt from `src/dh_audio_toolkit.py`; test node groups,
@@ -30,6 +30,8 @@ The suite checks:
 - clean and repeated rebuild determinism;
 - public assets, internal non-assets, stable catalogs, widths, panels, sockets,
   Boolean types, and menu/default values;
+- deterministic node/frame placement and conservative non-overlap bounds for
+  every generated public and internal node tree;
 - Shader Map range, invert, clamp, and curve interface defaults;
 - Analyzer time/channel behavior and spectrum movement across low, mid, and
   high-frequency sections;

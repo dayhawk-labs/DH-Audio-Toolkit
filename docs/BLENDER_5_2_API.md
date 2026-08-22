@@ -253,6 +253,22 @@ case, and remained correct while the source topology changed.
   "GeometryNodeTree"`, and making an object with the target Nodes modifier
   active was sufficient for `edit_tree` to resolve to that geometry group.
 
+## Node dimensions and layout validation
+
+- `Node.dimensions` is not a reliable generator-time layout source. In a
+  background build, or before a tree has been displayed, it can be zero or
+  stale.
+- After assigning `SpaceNodeEditor.node_tree`, forcing a redraw populates the
+  rendered dimensions. Those values are expressed at the current UI scale;
+  `dimensions.x / width` was approximately `1.94444` in the validation UI.
+- `Node.location_absolute` is useful for a live visual audit because it
+  resolves frame-relative child locations. Sibling collision checks can then
+  compare rendered dimensions after dividing by the observed UI scale.
+- The canonical generator therefore uses conservative logical heights derived
+  from visible socket rows and native-node minimums. It stores those bounds on
+  generated nodes so the headless regression suite can enforce deterministic
+  non-overlap. A connected-UI audit separately verifies the real drawn bounds.
+
 ## Mesh Grid indexing
 
 - Node identifier: `GeometryNodeMeshGrid`

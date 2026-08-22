@@ -30,7 +30,7 @@ import wave
 import bpy
 
 
-TOOLKIT_VERSION = "3.8.0"
+TOOLKIT_VERSION = "3.8.1"
 
 PUBLIC_GROUPS = {
     "DH Audio Analyzer": ("GeometryNodeTree", 330, "75e799e2-55ce-553a-8fdf-a74c5cf0de2c"),
@@ -264,7 +264,18 @@ def _tree_signature():
                 )
             interface.append(row)
 
-        nodes = sorted((node.name, node.bl_idname) for node in tree.nodes)
+        nodes = sorted(
+            (
+                node.name,
+                node.bl_idname,
+                node.parent.name if node.parent else None,
+                round(float(node.location.x), 3),
+                round(float(node.location.y), 3),
+                round(float(node.width), 3),
+                round(float(node.get("dh_layout_height", node.height)), 3),
+            )
+            for node in tree.nodes
+        )
         links = sorted(
             (
                 link.from_node.name,
@@ -295,6 +306,45 @@ def _tree_signature():
 def _run_generator(repo_root):
     namespace = runpy.run_path(str(repo_root / "src" / "dh_audio_toolkit.py"))
     namespace["main"]()
+
+
+def _layout_collisions(tree, margin=20.0):
+    """Audit deterministic logical bounds without requiring a drawn UI."""
+    scopes = {}
+    for node in tree.nodes:
+        if node.bl_idname == "NodeReroute":
+            continue
+        scopes.setdefault(node.parent.name if node.parent else None, []).append(node)
+
+    def bounds(node):
+        x = float(node.location.x)
+        y = float(node.location.y)
+        width = float(node.get("dh_layout_width", node.width))
+        height = float(node.get("dh_layout_height", node.height))
+        return x, x + width, y - height, y
+
+    def intersects(first, second):
+        return not (
+            first[1] + margin <= second[0]
+            or second[1] + margin <= first[0]
+            or first[3] + margin <= second[2]
+            or second[3] + margin <= first[2]
+        )
+
+    collisions = []
+    for parent_name, nodes in scopes.items():
+        for index, first_node in enumerate(nodes):
+            first_bounds = bounds(first_node)
+            for second_node in nodes[index + 1 :]:
+                if intersects(first_bounds, bounds(second_node)):
+                    collisions.append(
+                        {
+                            "parent": parent_name,
+                            "first": first_node.name,
+                            "second": second_node.name,
+                        }
+                    )
+    return collisions
 
 
 def _write_test_wav(path):
@@ -428,6 +478,20 @@ def _audit_interface(report):
     report.check("Blender 5.2 or newer", bpy.app.version >= (5, 2, 0), bpy.app.version_string)
     report.check("All public groups generated", all(bpy.data.node_groups.get(name) for name in PUBLIC_GROUPS))
     report.check("All internal groups generated", all(bpy.data.node_groups.get(name) for name in INTERNAL_GROUPS))
+
+    for name in sorted(set(PUBLIC_GROUPS) | set(INTERNAL_GROUPS)):
+        tree = bpy.data.node_groups[name]
+        report.check(
+            f"{name}: deterministic readable layout",
+            tree.get("dh_layout_version") == 1,
+            tree.get("dh_layout_version"),
+        )
+        collisions = _layout_collisions(tree)
+        report.check(
+            f"{name}: no internal node/frame overlaps",
+            not collisions,
+            collisions,
+        )
 
     asset_names = {tree.name for tree in bpy.data.node_groups if tree.asset_data}
     report.check("Exactly 20 public assets", asset_names == set(PUBLIC_GROUPS), sorted(asset_names))

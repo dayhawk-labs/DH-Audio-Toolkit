@@ -3,8 +3,13 @@ import re
 import os
 
 # =====================================================================
-# DH AUDIO TOOLKIT 3.8.0
+# DH AUDIO TOOLKIT 3.8.1
 # Blender 5.2+
+#
+# 3.8.1:
+# - Added deterministic, headless-safe node layout for every generated tree.
+# - Stage frames and sibling nodes now retain readable gutters at Blender UI
+#   scale, with local Material Reader source inputs reducing cable fan-out.
 #
 # 3.8.0:
 # - Added DH Audio Stereo Analyzer with one field-driven FFT sampler for both
@@ -125,7 +130,7 @@ import os
 # - Material Reader can switch between Geometry and Instancer lookup.
 # =====================================================================
 
-TOOLKIT_VERSION = "3.8.0"
+TOOLKIT_VERSION = "3.8.1"
 BLENDER_MIN_VERSION = (5, 2, 0)
 
 REBUILD_EXISTING = True
@@ -538,6 +543,181 @@ def make_frame(nodes, name, label, location=(0, 0), width=420, label_size=22):
     frame.width = width
     frame.label_size = label_size
     return frame
+
+
+# Node locations are stored in node-editor units, while ``node.dimensions`` is
+# only populated after a tree has actually been drawn in a UI region.  The
+# asset generator also runs headlessly, so internal layout cannot depend on
+# dimensions.  These conservative estimates use visible socket rows instead.
+LAYOUT_COLUMN_CLUSTER = 60.0
+LAYOUT_COLUMN_GAP = 90.0
+LAYOUT_ROW_GAP = 60.0
+LAYOUT_FRAME_GAP = 260.0
+LAYOUT_FRAME_PADDING_X = 70.0
+LAYOUT_FRAME_TOP = 300.0
+
+
+def estimated_node_height(node):
+    """Return a deterministic, headless-safe logical height for layout."""
+    if node.bl_idname == "NodeReroute":
+        return 24.0
+
+    visible_inputs = sum(
+        1 for socket in node.inputs
+        if not socket.hide and getattr(socket, "enabled", True)
+    )
+    visible_outputs = sum(
+        1 for socket in node.outputs
+        if not socket.hide and getattr(socket, "enabled", True)
+    )
+    socket_rows = max(visible_inputs, visible_outputs, 1)
+
+    # Blender nodes such as Math and Compare add operation controls that are
+    # not represented by sockets.  Sixty-four units plus a conservative
+    # 32-unit socket pitch covers those controls and also matches tall group
+    # input/output nodes in a headless build.
+    height = max(100.0, 64.0 + socket_rows * 32.0)
+    if node.bl_idname in {"GeometryNodeGroup", "ShaderNodeGroup"}:
+        # Group-node panels and headings add rows that are not visible through
+        # the socket collections, especially when advanced panels are closed.
+        height *= 1.5
+    native_minimums = {
+        "GeometryNodeCurvePrimitiveLine": 270.0,
+        "GeometryNodeMeshLine": 290.0,
+        "GeometryNodeMeshCylinder": 310.0,
+        "GeometryNodeMeshCone": 330.0,
+        "GeometryNodeSampleIndex": 215.0,
+    }
+    return max(height, native_minimums.get(node.bl_idname, 0.0))
+
+
+def _layout_node_scope(scope_nodes, *, start_x=40.0, top_y=LAYOUT_FRAME_TOP):
+    """Pack sibling nodes into readable columns while preserving graph flow."""
+    arranged = [node for node in scope_nodes if node.bl_idname != "NodeReroute"]
+    if not arranged:
+        return 0.0, 0.0
+
+    original = {
+        node: (float(node.location.x), float(node.location.y))
+        for node in arranged
+    }
+    ordered = sorted(arranged, key=lambda node: (original[node][0], node.name))
+
+    columns = []
+    for node in ordered:
+        node_x = original[node][0]
+        if not columns or node_x - columns[-1]["anchor"] > LAYOUT_COLUMN_CLUSTER:
+            columns.append({"anchor": node_x, "nodes": [node]})
+        else:
+            columns[-1]["nodes"].append(node)
+
+    x_cursor = float(start_x)
+    lowest_bottom = float(top_y)
+    for column in columns:
+        column_nodes = sorted(
+            column["nodes"],
+            key=lambda node: (-original[node][1], node.name),
+        )
+        column_width = max(float(node.width) for node in column_nodes)
+        y_cursor = float(top_y)
+        for node in column_nodes:
+            height = estimated_node_height(node)
+            node.location = (x_cursor, y_cursor)
+            node["dh_layout_height"] = height
+            node["dh_layout_width"] = float(node.width)
+            y_cursor -= height + LAYOUT_ROW_GAP
+            lowest_bottom = min(lowest_bottom, y_cursor + LAYOUT_ROW_GAP)
+        x_cursor += column_width + LAYOUT_COLUMN_GAP
+
+    return x_cursor - start_x - LAYOUT_COLUMN_GAP, top_y - lowest_bottom
+
+
+def organize_tree_layout(tree):
+    """Create a deterministic, non-overlapping internal layout for one tree."""
+    frames = [
+        node for node in tree.nodes
+        if node.bl_idname == "NodeFrame" and node.parent is None
+    ]
+
+    if not frames:
+        width, height = _layout_node_scope(list(tree.nodes), start_x=-900.0)
+        tree["dh_layout_width"] = width
+        tree["dh_layout_height"] = height
+        tree["dh_layout_version"] = 1
+        return tree
+
+    frame_order = sorted(
+        frames,
+        key=lambda frame: (
+            float(frame.location.x),
+            -float(frame.location.y),
+            frame.name,
+        ),
+    )
+
+    footprints = {}
+    for frame in frame_order:
+        children = [node for node in tree.nodes if node.parent == frame]
+        content_width, content_height = _layout_node_scope(children)
+        frame_width = max(420.0, content_width + 2.0 * LAYOUT_FRAME_PADDING_X)
+        frame_height = max(240.0, content_height + 120.0)
+        frame.shrink = False
+        frame.width = frame_width
+        frame.height = frame_height
+        frame["dh_layout_width"] = frame_width
+        frame["dh_layout_height"] = frame_height
+        footprints[frame] = (frame_width, frame_height)
+
+    frame_top = 650.0
+    cursor_x = -900.0
+    for frame in frame_order:
+        frame.location = (cursor_x, frame_top)
+        cursor_x += footprints[frame][0] + LAYOUT_FRAME_GAP
+
+    unframed = [
+        node for node in tree.nodes
+        if node.parent is None and node.bl_idname != "NodeFrame"
+    ]
+    inputs = [node for node in unframed if node.bl_idname == "NodeGroupInput"]
+    outputs = [node for node in unframed if node.bl_idname == "NodeGroupOutput"]
+    others = [node for node in unframed if node not in inputs and node not in outputs]
+
+    input_x = -900.0 - max((float(node.width) for node in inputs), default=0.0) - 260.0
+    input_y = frame_top
+    for node in sorted(inputs, key=lambda item: item.name):
+        height = estimated_node_height(node)
+        node.location = (input_x, input_y)
+        node["dh_layout_height"] = height
+        node["dh_layout_width"] = float(node.width)
+        input_y -= height + LAYOUT_ROW_GAP
+
+    if others:
+        other_width, _other_height = _layout_node_scope(
+            others,
+            start_x=cursor_x,
+            top_y=frame_top,
+        )
+        cursor_x += other_width + LAYOUT_FRAME_GAP
+
+    output_x = cursor_x + 40.0
+    output_y = frame_top
+    for node in sorted(outputs, key=lambda item: item.name):
+        height = estimated_node_height(node)
+        node.location = (output_x, output_y)
+        node["dh_layout_height"] = height
+        node["dh_layout_width"] = float(node.width)
+        output_y -= height + LAYOUT_ROW_GAP
+
+    tree["dh_layout_width"] = output_x + max(
+        (float(node.width) for node in outputs), default=0.0
+    ) + 900.0
+    tree["dh_layout_version"] = 1
+    return tree
+
+
+def organize_generated_layouts(trees):
+    for tree in trees:
+        organize_tree_layout(tree)
 
 
 def math_node(nodes, name, operation, location, parent=None, label=None):
@@ -3997,10 +4177,6 @@ def create_material_reader():
         material_outputs.append((output_name, attr_name, "named"))
 
     nodes = tree.nodes
-    group_in = nodes.new("NodeGroupInput")
-    group_in.location = (-1150, 100)
-    group_in.width = 220
-
     group_out = nodes.new("NodeGroupOutput")
     group_out.location = (1650, 100)
     group_out.width = 250
@@ -4015,6 +4191,17 @@ def create_material_reader():
         "stereo": frame_stereo,
         "history": frame_history,
         "named": frame_named,
+    }
+    source_inputs = {
+        category: local_group_input(
+            nodes,
+            "Attribute Source",
+            ["Use Instancer"],
+            parent=frame,
+            location=(-210, 330),
+            width=180,
+        )
+        for category, frame in frames.items()
     }
     local_indices = {"spectrum": 0, "stereo": 0, "history": 0, "named": 0}
 
@@ -4075,7 +4262,7 @@ def create_material_reader():
         link(tree, inst, "Fac", diff, 0)
         link(tree, geo, "Fac", diff, 1)
         link(tree, diff, "Value", weight, 0)
-        link(tree, group_in, "Use Instancer", weight, 1)
+        link(tree, source_inputs[category], "Use Instancer", weight, 1)
         link(tree, geo, "Fac", select, 0)
         link(tree, weight, "Value", select, 1)
         link(tree, select, "Value", group_out, output_name)
@@ -6725,6 +6912,34 @@ def main():
 
     material_reader = create_material_reader()
     bars = create_spectrum_bars(analyzer)
+
+    organize_generated_layouts((
+        response,
+        temporal_response,
+        spectrum_history,
+        shader_response,
+        shader_map,
+        frequency_map,
+        frequency_selection,
+        store_spectrum,
+        store_stereo,
+        named_map,
+        named_meta_store,
+        named_store,
+        analyzer,
+        stereo_analyzer,
+        spectrum_points,
+        stereo_points,
+        radial_spectrum,
+        query,
+        sample_range,
+        named_bands,
+        spectrum_instances,
+        spectrum_curve,
+        spectrum_fill,
+        material_reader,
+        bars,
+    ))
 
     readme = create_readme_text()
     host = create_demo_host(analyzer)
