@@ -30,7 +30,7 @@ import wave
 import bpy
 
 
-TOOLKIT_VERSION = "3.8.1"
+TOOLKIT_VERSION = "3.9.0"
 
 PUBLIC_GROUPS = {
     "DH Audio Analyzer": ("GeometryNodeTree", 330, "75e799e2-55ce-553a-8fdf-a74c5cf0de2c"),
@@ -40,6 +40,7 @@ PUBLIC_GROUPS = {
     "DH Audio Frequency Map": ("GeometryNodeTree", 300, "bb4cca6c-c5d5-52c9-80fb-754adc068f91"),
     "DH Audio Frequency Selection": ("GeometryNodeTree", 280, "9b46dff4-fa9d-510f-b0ae-a8af6da87e3a"),
     "DH Audio Band Query": ("GeometryNodeTree", 285, "9b46dff4-fa9d-510f-b0ae-a8af6da87e3a"),
+    "DH Audio Spectrum Sample": ("GeometryNodeTree", 310, "9b46dff4-fa9d-510f-b0ae-a8af6da87e3a"),
     "DH Audio Response": ("GeometryNodeTree", 285, "a4faf3f4-5a13-5f83-ae97-28993f20ac20"),
     "DH Audio Temporal Response": ("GeometryNodeTree", 310, "75e799e2-55ce-553a-8fdf-a74c5cf0de2c"),
     "DH Audio Spectrum History": ("GeometryNodeTree", 310, "de47b34b-1184-5bc8-84ac-3c5ada05f601"),
@@ -169,6 +170,12 @@ EXPECTED_PANELS = {
         "Frequency Metadata": True,
         "Spectrum History": True,
         "Named Bands": False,
+    },
+    "DH Audio Spectrum Sample": {
+        "Query": False,
+        "Band Values": False,
+        "Stereo Values": False,
+        "Frequency Metadata": True,
     },
     "DH Audio Shader Map": {
         "Mapping": False,
@@ -494,7 +501,7 @@ def _audit_interface(report):
         )
 
     asset_names = {tree.name for tree in bpy.data.node_groups if tree.asset_data}
-    report.check("Exactly 20 public assets", asset_names == set(PUBLIC_GROUPS), sorted(asset_names))
+    report.check("Exactly 21 public assets", asset_names == set(PUBLIC_GROUPS), sorted(asset_names))
 
     for name, (tree_type, width, catalog) in PUBLIC_GROUPS.items():
         tree = bpy.data.node_groups[name]
@@ -536,6 +543,7 @@ def _audit_interface(report):
         ("DH Audio Stereo Analyzer", "Bands"): 32,
         ("DH Audio Stereo Analyzer", "Spacing"): 1.0,
         ("DH Audio Stereo Analyzer", "Channel Spacing"): 1.0,
+        ("DH Audio Spectrum Sample", "Band"): 0,
         ("DH Audio Spectrum Bars", "Bar Profile"): "Box",
         ("DH Audio Spectrum Curve", "Curve Style"): "Smooth",
         ("DH Audio Response", "Gain"): 1.0,
@@ -587,6 +595,23 @@ def _audit_interface(report):
         else:
             equal = actual == expected
         report.check(f"{group_name}: {socket_name} default", equal, actual)
+
+    spectrum_sample = bpy.data.node_groups["DH Audio Spectrum Sample"]
+    sample_band = _interface_socket(spectrum_sample, "Band", "INPUT")
+    sample_outputs = [
+        item for item in spectrum_sample.interface.items_tree
+        if item.item_type == "SOCKET" and item.in_out == "OUTPUT"
+    ]
+    report.check(
+        "Spectrum Sample Band is a field input",
+        sample_band.structure_type == "FIELD",
+        sample_band.structure_type,
+    )
+    report.check(
+        "Spectrum Sample outputs are fields",
+        sample_outputs and all(item.structure_type == "FIELD" for item in sample_outputs),
+        {item.name: item.structure_type for item in sample_outputs},
+    )
 
     boolean_inputs = {
         ("DH Audio Analyzer", "Use Scene Time"),
@@ -1493,6 +1518,146 @@ def _test_sample_range_and_query(report, sound):
     report.check("Band Query clamps above range", high_index == 31, high_index)
 
 
+def _test_spectrum_sample(report):
+    tree, _group_in, group_out = _new_geometry_tree("DH Test Spectrum Sample")
+
+    source = tree.nodes.new("GeometryNodeMeshLine")
+    source.mode = "OFFSET"
+    _set_input(source, "Count", 4)
+    source_index = tree.nodes.new("GeometryNodeInputIndex")
+
+    amplitude_scale = tree.nodes.new("ShaderNodeMath")
+    amplitude_scale.operation = "MULTIPLY"
+    _set_input(amplitude_scale, 1, 0.25)
+    amplitude_add = tree.nodes.new("ShaderNodeMath")
+    amplitude_add.operation = "ADD"
+    _set_input(amplitude_add, 1, 0.1)
+    tree.links.new(_socket(source_index.outputs, "Index"), _socket(amplitude_scale.inputs, 0))
+    tree.links.new(_socket(amplitude_scale.outputs, "Value"), _socket(amplitude_add.inputs, 0))
+
+    left_add = tree.nodes.new("ShaderNodeMath")
+    left_add.operation = "ADD"
+    _set_input(left_add, 1, 10.0)
+    right_add = tree.nodes.new("ShaderNodeMath")
+    right_add.operation = "ADD"
+    _set_input(right_add, 1, 20.0)
+    tree.links.new(_socket(source_index.outputs, "Index"), _socket(left_add.inputs, 0))
+    tree.links.new(_socket(source_index.outputs, "Index"), _socket(right_add.inputs, 0))
+
+    source_amp = _store_attribute(
+        tree,
+        _socket(source.outputs, "Mesh"),
+        _socket(amplitude_add.outputs, "Value"),
+        "dh_audio_amp",
+    )
+    source_band = _store_attribute(
+        tree,
+        _socket(source_amp.outputs, "Geometry"),
+        _socket(source_index.outputs, "Index"),
+        "dh_audio_band_index",
+        "INT",
+    )
+    source_left = _store_attribute(
+        tree,
+        _socket(source_band.outputs, "Geometry"),
+        _socket(left_add.outputs, "Value"),
+        "dh_audio_left_amp",
+    )
+    source_right = _store_attribute(
+        tree,
+        _socket(source_left.outputs, "Geometry"),
+        _socket(right_add.outputs, "Value"),
+        "dh_audio_right_amp",
+    )
+
+    target = tree.nodes.new("GeometryNodeMeshLine")
+    target.mode = "OFFSET"
+    _set_input(target, "Count", 6)
+    target_index = tree.nodes.new("GeometryNodeInputIndex")
+    modulo = tree.nodes.new("FunctionNodeIntegerMath")
+    modulo.operation = "MODULO"
+    _set_input(modulo, 1, 4)
+    tree.links.new(_socket(target_index.outputs, "Index"), _socket(modulo.inputs, 0))
+
+    sample = _group_node(tree, "DH Audio Spectrum Sample")
+    tree.links.new(_socket(source_right.outputs, "Geometry"), _socket(sample.inputs, "Spectrum"))
+    tree.links.new(_socket(modulo.outputs, "Value"), _socket(sample.inputs, "Band"))
+
+    sampled_amp = _store_attribute(
+        tree,
+        _socket(target.outputs, "Mesh"),
+        _socket(sample.outputs, "Amplitude"),
+        "dh_test_sample_amp",
+    )
+    sampled_band = _store_attribute(
+        tree,
+        _socket(sampled_amp.outputs, "Geometry"),
+        _socket(sample.outputs, "Band Index"),
+        "dh_test_sample_band",
+        "INT",
+    )
+    sampled_left = _store_attribute(
+        tree,
+        _socket(sampled_band.outputs, "Geometry"),
+        _socket(sample.outputs, "Left Amplitude"),
+        "dh_test_sample_left",
+    )
+    sampled_right = _store_attribute(
+        tree,
+        _socket(sampled_left.outputs, "Geometry"),
+        _socket(sample.outputs, "Right Amplitude"),
+        "dh_test_sample_right",
+    )
+    tree.links.new(_socket(sampled_right.outputs, "Geometry"), _socket(group_out.inputs, "Geometry"))
+
+    obj = _new_host("DH Test Spectrum Sample Host", tree)
+    snapshot = _snapshot(obj)
+    attributes = snapshot["attributes"]
+
+    expected_amp = [0.1, 0.35, 0.6, 0.85, 0.1, 0.35]
+    expected_band = [0, 1, 2, 3, 0, 1]
+    expected_left = [10.0, 11.0, 12.0, 13.0, 10.0, 11.0]
+    expected_right = [20.0, 21.0, 22.0, 23.0, 20.0, 21.0]
+
+    def close(actual, expected):
+        return actual is not None and len(actual) == len(expected) and all(
+            abs(float(a) - float(b)) < 1e-5 for a, b in zip(actual, expected)
+        )
+
+    report.check(
+        "Spectrum Sample evaluates Band as a per-element field",
+        close(attributes.get("dh_test_sample_amp"), expected_amp),
+        attributes.get("dh_test_sample_amp"),
+    )
+    report.check(
+        "Spectrum Sample returns sampled band indices",
+        attributes.get("dh_test_sample_band") == expected_band,
+        attributes.get("dh_test_sample_band"),
+    )
+    report.check(
+        "Spectrum Sample returns paired left fields",
+        close(attributes.get("dh_test_sample_left"), expected_left),
+        attributes.get("dh_test_sample_left"),
+    )
+    report.check(
+        "Spectrum Sample returns paired right fields",
+        close(attributes.get("dh_test_sample_right"), expected_right),
+        attributes.get("dh_test_sample_right"),
+    )
+
+    sample_tree = bpy.data.node_groups["DH Audio Spectrum Sample"]
+    sample_nodes = [
+        node for node in sample_tree.nodes
+        if node.bl_idname == "GeometryNodeSampleIndex"
+    ]
+    report.check(
+        "Spectrum Sample clamps every sampled attribute",
+        len(sample_nodes) == len(SPECTRUM_ATTRIBUTES) + len(STEREO_ATTRIBUTES)
+        and all(node.clamp and node.domain == "POINT" for node in sample_nodes),
+        {"count": len(sample_nodes), "clamp": [node.clamp for node in sample_nodes]},
+    )
+
+
 def _analyzer_points_chain(tree, sound):
     analyzer = _group_node(tree, "DH Audio Analyzer")
     _set_input(analyzer, "Sound", sound)
@@ -1697,7 +1862,7 @@ def run_validation(repo_root=None, release_path=None, report_path=None):
 
         report.check("Repeated build structural signature", first_signature == second_signature, {"first": first_signature, "second": second_signature})
         report.check("Repeated build catalog bytes", first_catalog == second_catalog, hashlib.sha256(second_catalog).hexdigest())
-        report.check("Exactly 25 generated groups", len([tree for tree in bpy.data.node_groups if tree.name in PUBLIC_GROUPS or tree.name in INTERNAL_GROUPS]) == 25, len(bpy.data.node_groups))
+        report.check("Exactly 26 generated groups", len([tree for tree in bpy.data.node_groups if tree.name in PUBLIC_GROUPS or tree.name in INTERNAL_GROUPS]) == 26, len(bpy.data.node_groups))
         handler_count = sum(1 for handler in bpy.app.handlers.save_post if getattr(handler, "__name__", "") == "_dh_audio_write_catalogs_on_save")
         report.check("Exactly one toolkit save handler", handler_count == 1, handler_count)
 
@@ -1716,6 +1881,7 @@ def run_validation(repo_root=None, release_path=None, report_path=None):
         report.section("Radial Spectrum tests completed", lambda: _test_radial_spectrum(report))
         report.section("Named-band tests completed", lambda: _test_bands(report, sound))
         report.section("Sample Range and Band Query tests completed", lambda: _test_sample_range_and_query(report, sound))
+        report.section("Spectrum Sample tests completed", lambda: _test_spectrum_sample(report))
         report.section("Visualizer tests completed", lambda: _test_visualizers(report, sound))
         report.section("Synthetic fill and curve tests completed", lambda: _test_synthetic_fill_and_curve(report))
         _remove_test_data()
@@ -1724,8 +1890,8 @@ def run_validation(repo_root=None, release_path=None, report_path=None):
         release = _clean_release(repo_root, release_path)
         report.observations["release"] = release
         report.check("Release contains no scene objects", release["objects"] == 0, release)
-        report.check("Release contains 25 generated groups", release["node_groups"] == 25, release)
-        report.check("Release contains 20 public assets", release["assets"] == 20, release)
+        report.check("Release contains 26 generated groups", release["node_groups"] == 26, release)
+        report.check("Release contains 21 public assets", release["assets"] == 21, release)
         report.check("Internal groups are not assets", not release["internal_assets"], release["internal_assets"])
         report.check("Release catalog sidecar exists", Path(release["catalog_path"]).is_file(), release["catalog_path"])
         report.check("Release repeat-build is deterministic", release["repeat_build_deterministic"], release)

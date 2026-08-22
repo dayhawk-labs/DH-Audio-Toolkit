@@ -1,4 +1,4 @@
-DH AUDIO TOOLKIT 3.8.1
+DH AUDIO TOOLKIT 3.9.0
 
 Blender 5.2+
 
@@ -157,6 +157,18 @@ DH Audio Band Query
 &#x20;   Samples one numbered Analyzer band and returns scalar amplitude/normalized
 
 &#x20;   values plus optional detailed frequency metadata.
+
+
+
+DH Audio Spectrum Sample
+
+&#x20;   Field-driven counterpart to Band Query. Band can vary per point, edge,
+
+&#x20;   face, curve point, or instance, so one reusable spectrum can drive custom
+
+&#x20;   extrusion, displacement, arrays, instances, or stored shader controls.
+
+&#x20;   Paired left/right fields are available for Stereo Analyzer carriers.
 
 
 
@@ -822,6 +834,37 @@ Detailed frequency metadata is intentionally collapsed by default.
 
 ======================================================================
 
+RECIPE 7A: SAMPLE A DIFFERENT BAND PER ELEMENT
+
+======================================================================
+
+
+
+&#x20;   DH Audio Analyzer \[Spectrum]
+
+&#x20;       -> DH Audio Spectrum Sample \[Spectrum]
+
+
+
+Connect an integer field to Band, such as Index, ID, a face group, or Index
+
+modulo Analyzer Bands. Use Amplitude or Normalized to drive Set Position,
+
+Extrude Mesh Offset Scale, Scale Instances, rotation, or Store Named Attribute.
+
+Stereo Analyzer carriers also expose paired Left and Right fields.
+
+
+
+Band is clamped to the available carrier points. Spectrum Sample reuses the
+
+carrier and does not contain another Sample Sound Frequencies node.
+
+
+
+
+======================================================================
+
 RECIPE 8: SAMPLE ONE CUSTOM FREQUENCY RANGE
 
 ======================================================================
@@ -1400,7 +1443,7 @@ Start with one of these three paths:
 
 &#x20;   CUSTOM:
 
-&#x20;       Analyzer -> Spectrum Instances / Band Query
+&#x20;       Analyzer -> Spectrum Instances / Band Query / Spectrum Sample
 
 
 

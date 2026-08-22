@@ -3,8 +3,13 @@ import re
 import os
 
 # =====================================================================
-# DH AUDIO TOOLKIT 3.8.1
+# DH AUDIO TOOLKIT 3.9.0
 # Blender 5.2+
+#
+# 3.9.0:
+# - Added DH Audio Spectrum Sample for field-driven, per-element band lookup.
+# - Standard and paired stereo spectrum values can now drive arbitrary mesh,
+#   curve, array, instance, and attribute-store workflows without re-analysis.
 #
 # 3.8.1:
 # - Added deterministic, headless-safe node layout for every generated tree.
@@ -75,6 +80,7 @@ import os
 #   - DH Audio Spectrum Points
 #   - DH Audio Stereo Points
 #   - DH Audio Band Query
+#   - DH Audio Spectrum Sample
 #   - DH Audio Sample Range
 #   - DH Audio Bands
 #   - DH Audio Spectrum Instances
@@ -130,7 +136,7 @@ import os
 # - Material Reader can switch between Geometry and Instancer lookup.
 # =====================================================================
 
-TOOLKIT_VERSION = "3.8.1"
+TOOLKIT_VERSION = "3.9.0"
 BLENDER_MIN_VERSION = (5, 2, 0)
 
 REBUILD_EXISTING = True
@@ -154,6 +160,7 @@ GROUP_STEREO_ANALYZER = "DH Audio Stereo Analyzer"
 GROUP_POINTS = "DH Audio Spectrum Points"
 GROUP_STEREO_POINTS = "DH Audio Stereo Points"
 GROUP_QUERY = "DH Audio Band Query"
+GROUP_SPECTRUM_SAMPLE = "DH Audio Spectrum Sample"
 GROUP_RANGE = "DH Audio Sample Range"
 GROUP_BANDS = "DH Audio Bands"
 GROUP_INSTANCES = "DH Audio Spectrum Instances"
@@ -188,6 +195,7 @@ ASSET_CATALOG_PATHS = {
     GROUP_STEREO_POINTS: "Geometry Nodes/DH Audio/Mapping",
     GROUP_RADIAL: "Geometry Nodes/DH Audio/Mapping",
     GROUP_QUERY: "Geometry Nodes/DH Audio/Query",
+    GROUP_SPECTRUM_SAMPLE: "Geometry Nodes/DH Audio/Query",
     GROUP_FREQ_SELECT: "Geometry Nodes/DH Audio/Query",
     GROUP_BARS: "Geometry Nodes/DH Audio/Visualizers",
     GROUP_CURVE: "Geometry Nodes/DH Audio/Visualizers",
@@ -213,6 +221,7 @@ PUBLIC_GROUP_WIDTHS = {
     GROUP_STEREO_POINTS: 315,
     GROUP_RADIAL: 315,
     GROUP_QUERY: 285,
+    GROUP_SPECTRUM_SAMPLE: 310,
     GROUP_FREQ_SELECT: 280,
     GROUP_BARS: 350,
     GROUP_CURVE: 310,
@@ -247,6 +256,7 @@ CANONICAL_GROUPS = [
     GROUP_POINTS,
     GROUP_RANGE,
     GROUP_QUERY,
+    GROUP_SPECTRUM_SAMPLE,
     GROUP_ANALYZER,
     GROUP_STEREO_ANALYZER,
     GROUP_FREQ_SELECT,
@@ -3614,6 +3624,173 @@ def create_band_query():
 
 
 # =====================================================================
+# DH Audio Spectrum Sample
+# =====================================================================
+
+def create_spectrum_sample():
+    """Sample reusable spectrum attributes with a caller-provided index field."""
+    tree = bpy.data.node_groups.new(GROUP_SPECTRUM_SAMPLE, "GeometryNodeTree")
+    tree["dh_role"] = "spectrum_field_sampler"
+
+    input_panel = tree.interface.new_panel(
+        name="Query",
+        description=(
+            "Sample Analyzer-compatible carrier geometry with a per-element "
+            "zero-based band field"
+        ),
+        default_closed=False,
+    )
+    primary_panel = tree.interface.new_panel(
+        name="Band Values",
+        description="Common sampled spectrum values",
+        default_closed=False,
+    )
+    stereo_panel = tree.interface.new_panel(
+        name="Stereo Values",
+        description=(
+            "Paired left/right values written by DH Audio Stereo Analyzer. "
+            "These evaluate as zero when the source does not carry stereo attributes"
+        ),
+        default_closed=False,
+    )
+    metadata_panel = tree.interface.new_panel(
+        name="Frequency Metadata",
+        description="Detailed sampled frequency bounds",
+        default_closed=True,
+    )
+
+    new_socket(
+        tree,
+        "Spectrum",
+        "INPUT",
+        "NodeSocketGeometry",
+        parent=input_panel,
+        description=(
+            "Reusable carrier from DH Audio Analyzer, Stereo Analyzer, "
+            "Spectrum Bars, or another compatible source"
+        ),
+        structure_type="SINGLE",
+    )
+    new_socket(
+        tree,
+        "Band",
+        "INPUT",
+        "NodeSocketInt",
+        parent=input_panel,
+        default=0,
+        min_value=0,
+        max_value=511,
+        description=(
+            "Zero-based band field evaluated on the downstream geometry. "
+            "Connect Index, ID, a face group, or any integer field. "
+            "Out-of-range values clamp to the carrier"
+        ),
+        structure_type="FIELD",
+    )
+
+    output_specs = []
+    frequency_names = {
+        "Low Frequency",
+        "Center Frequency",
+        "High Frequency",
+        "Bandwidth",
+    }
+    for output_name, attr_name, dtype in SPECTRUM_ATTRS:
+        panel = metadata_panel if output_name in frequency_names else primary_panel
+        if dtype == "INT":
+            socket_type = "NodeSocketInt"
+        elif output_name in frequency_names:
+            socket_type = "NodeSocketFloatFrequency"
+        else:
+            socket_type = "NodeSocketFloat"
+        new_socket(
+            tree,
+            output_name,
+            "OUTPUT",
+            socket_type,
+            parent=panel,
+            description=f"Samples '{attr_name}' at Band",
+            structure_type="FIELD",
+        )
+        output_specs.append((output_name, attr_name, dtype, "spectrum"))
+
+    for output_name, attr_name, dtype in STEREO_ATTRS:
+        socket_type = "NodeSocketInt" if dtype == "INT" else "NodeSocketFloat"
+        new_socket(
+            tree,
+            output_name,
+            "OUTPUT",
+            socket_type,
+            parent=stereo_panel,
+            description=f"Samples paired stereo attribute '{attr_name}' at Band",
+            structure_type="FIELD",
+        )
+        output_specs.append((output_name, attr_name, dtype, "stereo"))
+
+    nodes = tree.nodes
+    group_out = nodes.new("NodeGroupOutput")
+    group_out.location = (2300, 120)
+    group_out.width = 300
+    group_out.is_active_output = True
+
+    frame = make_frame(
+        nodes,
+        "FRAME_SPECTRUM_SAMPLE",
+        "FIELD-DRIVEN SPECTRUM LOOKUP",
+        (-900, 700),
+        2900,
+    )
+    sample_in = local_group_input(
+        nodes,
+        "Spectrum + Band Field",
+        ["Spectrum", "Band"],
+        parent=frame,
+        location=(20, 200),
+        width=230,
+    )
+
+    for index, (output_name, attr_name, dtype, category) in enumerate(output_specs):
+        col = index % 4
+        row = index // 4
+        x = 300 + col * 500
+        y = 420 - row * 260
+
+        attr = named_attribute_node(
+            nodes,
+            attr_name,
+            dtype,
+            parent=frame,
+            location=(x, y),
+            label=output_name,
+        )
+        attr.width = 190
+
+        sample = nodes.new("GeometryNodeSampleIndex")
+        sample.name = f"Sample Field {output_name}"
+        sample.label = (
+            f"{output_name} [Stereo]" if category == "stereo" else output_name
+        )
+        sample.data_type = dtype
+        sample.domain = "POINT"
+        sample.clamp = True
+        sample.width = 230
+        sample.parent = frame
+        sample.location = (x + 220, y)
+
+        link(tree, sample_in, "Spectrum", sample, "Geometry")
+        link(tree, attr, "Attribute", sample, "Value")
+        link(tree, sample_in, "Band", sample, "Index")
+        link(tree, sample, "Value", group_out, output_name)
+
+    mark_asset(
+        tree,
+        "Sample reusable spectrum and paired stereo attributes with a per-element "
+        "band field for arbitrary deformation, array, instance, and attribute workflows."
+    )
+    return tree
+
+
+# =====================================================================
 # 5. DH Audio Sample Range
 # =====================================================================
 
@@ -6201,6 +6378,12 @@ DH Audio Band Query
     Samples one numbered Analyzer band and returns scalar amplitude/normalized
     values plus optional detailed frequency metadata.
 
+DH Audio Spectrum Sample
+    Field-driven counterpart to Band Query. Band can vary per point, edge,
+    face, curve point, or instance, so one reusable spectrum can drive custom
+    extrusion, displacement, arrays, instances, or stored shader controls.
+    Paired left/right fields are available for Stereo Analyzer carriers.
+
 DH Audio Sample Range
     Standalone direct sampler for one custom Low Hz -> High Hz range. Use it
     when you want one reaction value and do not need a complete spectrum.
@@ -6543,6 +6726,29 @@ Detailed frequency metadata is intentionally collapsed by default.
 
 
 ======================================================================
+RECIPE 7A: SAMPLE A DIFFERENT BAND PER ELEMENT
+======================================================================
+
+    DH Audio Analyzer [Spectrum]
+        -> DH Audio Spectrum Sample [Spectrum]
+
+Connect an integer field to Band, for example:
+
+    Index
+    ID
+    Face Group
+    Index modulo Analyzer Bands
+
+Use Amplitude or Normalized to drive Set Position, Extrude Mesh Offset Scale,
+Scale Instances, rotation, or Store Named Attribute. For Stereo Analyzer,
+Left Amplitude and Right Amplitude provide paired channel fields while only
+one band lookup field is required.
+
+Band is clamped to the available carrier points. This node reuses spectrum
+data; it does not contain another Sample Sound Frequencies node.
+
+
+======================================================================
 RECIPE 8: SAMPLE ONE CUSTOM FREQUENCY RANGE
 ======================================================================
 
@@ -6836,7 +7042,7 @@ Start with one of these three paths:
         Analyzer -> Spectrum Points -> Curve / Fill
 
     CUSTOM:
-        Analyzer -> Spectrum Instances / Band Query
+        Analyzer -> Spectrum Instances / Band Query / Spectrum Sample
 """)
     return readme
 
@@ -6903,6 +7109,7 @@ def main():
     stereo_points = create_stereo_points(spectrum_points)
     radial_spectrum = create_radial_spectrum()
     query = create_band_query()
+    spectrum_sample = create_spectrum_sample()
     sample_range = create_sample_range(response)
     named_bands = create_named_bands(named_map, named_meta_store, named_store)
 
@@ -6932,6 +7139,7 @@ def main():
         stereo_points,
         radial_spectrum,
         query,
+        spectrum_sample,
         sample_range,
         named_bands,
         spectrum_instances,
@@ -6963,6 +7171,7 @@ def main():
         stereo_points,
         radial_spectrum,
         query,
+        spectrum_sample,
         sample_range,
         named_bands,
         spectrum_instances,
@@ -6986,7 +7195,7 @@ def main():
     print("  Analyzer Spectrum -> Temporal Response -> downstream consumers")
     print("  Spectrum Points   -> Spectrum History -> waterfall rows / custom surfaces")
     print("  Analyzer Spectrum -> Frequency Selection -> downstream Selection inputs")
-    print("  Analyzer Spectrum -> Instances / Band Query")
+    print("  Analyzer Spectrum -> Instances / Band Query / Spectrum Sample")
     print("  Spectrum Bars     -> standalone Analyzer wrapper + compatible Spectrum Points")
     print("  Audio Bands       -> named musical ranges + integrated attribute bridge")
 

@@ -305,6 +305,20 @@ Verified examples:
   With both enabled, named values remain available on realized point geometry
   and in the instancer context used by DH Audio Material Reader.
 
+## Field-driven Sample Index lookup
+
+- Node identifier: `GeometryNodeSampleIndex`
+- Verified RNA properties: `data_type`, `domain`, and `clamp`.
+- For spectrum carriers, use `domain = "POINT"` and `clamp = True`.
+- A group interface integer socket with `structure_type = "FIELD"` can drive
+  Sample Index's `Index` input from the downstream evaluation context.
+- Sampled outputs also remain fields when their interface sockets use
+  `structure_type = "FIELD"`.
+- A live prototype sampled a four-point carrier over six target points with
+  `Band = Index modulo 4`, producing the expected repeating sequence. This is
+  the Blender 5.2 basis for `DH Audio Spectrum Sample`; it reuses carrier
+  attributes and does not add another audio sampler.
+
 ## Other verified Blender 5.2 identifiers
 
 - Eevee render engine enum: `BLENDER_EEVEE`
