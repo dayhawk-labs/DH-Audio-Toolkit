@@ -18,7 +18,7 @@ To create a clean asset-library build after the tests pass:
 & "C:\path\to\Blender 5.2\blender.exe" --background --factory-startup `
   --python tests/blender_52_regression.py -- `
   --report temp/blender_52_report.json `
-  --release "releases/DH Audio Toolkit 3.10.0.blend"
+  --release "releases/DH Audio Toolkit 3.11.0-beta.1.blend"
 ```
 
 The release file is rebuilt from `src/dh_audio_toolkit.py`; test node groups,
@@ -33,6 +33,7 @@ The suite checks:
 - deterministic node/frame placement and conservative non-overlap bounds for
   every generated public and internal node tree;
 - Shader Map range, invert, clamp, and curve interface defaults;
+- Shader UV Transform effective offset, pivot scale, and Z rotation;
 - Analyzer time/channel behavior and spectrum movement across low, mid, and
   high-frequency sections;
 - Stereo Analyzer one-sampler channel-field behavior, separate Left/Right
@@ -49,6 +50,10 @@ The suite checks:
   left/right values, and safe carrier clamping;
 - Spectrum Bridge point/instance storage, partial Selection, direct sampled
   fields, instancer-context lookup, and propagation through Realize Instances;
+- Mesh Deform per-point stereo mapping, Selection, movement, and attribute
+  storage;
+- Mesh Extrude normal/individual and direction/region branches, Top/Side
+  fields, full face schema propagation, and audio top-scale fields;
 - Points, Bars, Instances, Curve, and Fill topology and attribute propagation;
 - Audio Radius behavior;
 - preservation of quiet intermediate fill bands;

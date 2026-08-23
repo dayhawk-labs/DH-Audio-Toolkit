@@ -3,8 +3,15 @@ import re
 import os
 
 # =====================================================================
-# DH AUDIO TOOLKIT 3.10.0
+# DH AUDIO TOOLKIT 3.11.0-beta.1
 # Blender 5.2+
+#
+# 3.11.0-beta.1:
+# - Added peer-beta geometry effects for deforming arbitrary point geometry
+#   and extruding mesh faces from reusable spectrum carriers.
+# - Added a shader UV transform helper for audio-driven offset, scale, and
+#   rotation without rebuilding coordinate math in every material.
+# - Added stereo-aware Audio Source menus and face-domain attribute transport.
 #
 # 3.10.0:
 # - Added DH Audio Spectrum Bridge for field-driven sampling onto arbitrary
@@ -88,6 +95,8 @@ import os
 #   - DH Audio Band Query
 #   - DH Audio Spectrum Sample
 #   - DH Audio Spectrum Bridge
+#   - DH Audio Mesh Deform
+#   - DH Audio Mesh Extrude
 #   - DH Audio Sample Range
 #   - DH Audio Bands
 #   - DH Audio Spectrum Instances
@@ -99,6 +108,7 @@ import os
 #   - DH Audio Material Reader
 #   - DH Audio Shader Response
 #   - DH Audio Shader Map
+#   - DH Audio Shader UV Transform
 #
 # Standard spectrum attributes:
 #   dh_audio_amp
@@ -143,7 +153,7 @@ import os
 # - Material Reader can switch between Geometry and Instancer lookup.
 # =====================================================================
 
-TOOLKIT_VERSION = "3.10.0"
+TOOLKIT_VERSION = "3.11.0-beta.1"
 BLENDER_MIN_VERSION = (5, 2, 0)
 
 REBUILD_EXISTING = True
@@ -169,6 +179,8 @@ GROUP_STEREO_POINTS = "DH Audio Stereo Points"
 GROUP_QUERY = "DH Audio Band Query"
 GROUP_SPECTRUM_SAMPLE = "DH Audio Spectrum Sample"
 GROUP_SPECTRUM_BRIDGE = "DH Audio Spectrum Bridge"
+GROUP_MESH_DEFORM = "DH Audio Mesh Deform"
+GROUP_MESH_EXTRUDE = "DH Audio Mesh Extrude"
 GROUP_RANGE = "DH Audio Sample Range"
 GROUP_BANDS = "DH Audio Bands"
 GROUP_INSTANCES = "DH Audio Spectrum Instances"
@@ -178,6 +190,7 @@ GROUP_BARS = "DH Audio Spectrum Bars"
 GROUP_MATERIAL_READER = "DH Audio Material Reader"
 GROUP_SHADER_RESPONSE = "DH Audio Shader Response"
 GROUP_SHADER_MAP = "DH Audio Shader Map"
+GROUP_SHADER_UV = "DH Audio Shader UV Transform"
 
 # Stable catalog UUIDs. Keep these unchanged in future releases so users can
 # replace/update the .blend without losing catalog assignments.
@@ -205,6 +218,8 @@ ASSET_CATALOG_PATHS = {
     GROUP_QUERY: "Geometry Nodes/DH Audio/Query",
     GROUP_SPECTRUM_SAMPLE: "Geometry Nodes/DH Audio/Query",
     GROUP_SPECTRUM_BRIDGE: "Geometry Nodes/DH Audio/Utilities",
+    GROUP_MESH_DEFORM: "Geometry Nodes/DH Audio/Utilities",
+    GROUP_MESH_EXTRUDE: "Geometry Nodes/DH Audio/Utilities",
     GROUP_FREQ_SELECT: "Geometry Nodes/DH Audio/Query",
     GROUP_BARS: "Geometry Nodes/DH Audio/Visualizers",
     GROUP_CURVE: "Geometry Nodes/DH Audio/Visualizers",
@@ -216,6 +231,7 @@ ASSET_CATALOG_PATHS = {
     GROUP_MATERIAL_READER: "DH Audio/Shaders",
     GROUP_SHADER_RESPONSE: "DH Audio/Shaders",
     GROUP_SHADER_MAP: "DH Audio/Shaders",
+    GROUP_SHADER_UV: "DH Audio/Shaders",
 }
 
 # Tuned for the visible interface of each public group. Long analyzer-style
@@ -232,6 +248,8 @@ PUBLIC_GROUP_WIDTHS = {
     GROUP_QUERY: 285,
     GROUP_SPECTRUM_SAMPLE: 310,
     GROUP_SPECTRUM_BRIDGE: 340,
+    GROUP_MESH_DEFORM: 340,
+    GROUP_MESH_EXTRUDE: 350,
     GROUP_FREQ_SELECT: 280,
     GROUP_BARS: 350,
     GROUP_CURVE: 310,
@@ -243,6 +261,7 @@ PUBLIC_GROUP_WIDTHS = {
     GROUP_MATERIAL_READER: 300,
     GROUP_SHADER_RESPONSE: 285,
     GROUP_SHADER_MAP: 300,
+    GROUP_SHADER_UV: 320,
 }
 
 # Internal implementation groups are created for readability but are not
@@ -250,6 +269,7 @@ PUBLIC_GROUP_WIDTHS = {
 INTERNAL_STORE_SPECTRUM = "DH Internal - Store Spectrum Attributes"
 INTERNAL_STORE_STEREO = "DH Internal - Store Stereo Attributes"
 INTERNAL_STORE_SPECTRUM_BRIDGE = "DH Internal - Store Spectrum Bridge Attributes"
+INTERNAL_STORE_SPECTRUM_FACE = "DH Internal - Store Spectrum Face Attributes"
 INTERNAL_NAMED_MAP = "DH Internal - Named Band Map"
 INTERNAL_STORE_NAMED_META = "DH Internal - Store Named Band Metadata"
 INTERNAL_STORE_NAMED = "DH Internal - Store Named Bands"
@@ -269,6 +289,8 @@ CANONICAL_GROUPS = [
     GROUP_QUERY,
     GROUP_SPECTRUM_SAMPLE,
     GROUP_SPECTRUM_BRIDGE,
+    GROUP_MESH_DEFORM,
+    GROUP_MESH_EXTRUDE,
     GROUP_ANALYZER,
     GROUP_STEREO_ANALYZER,
     GROUP_FREQ_SELECT,
@@ -280,9 +302,11 @@ CANONICAL_GROUPS = [
     GROUP_MATERIAL_READER,
     GROUP_SHADER_RESPONSE,
     GROUP_SHADER_MAP,
+    GROUP_SHADER_UV,
     INTERNAL_STORE_SPECTRUM,
     INTERNAL_STORE_STEREO,
     INTERNAL_STORE_SPECTRUM_BRIDGE,
+    INTERNAL_STORE_SPECTRUM_FACE,
     INTERNAL_NAMED_MAP,
     INTERNAL_STORE_NAMED_META,
     INTERNAL_STORE_NAMED,
@@ -328,6 +352,32 @@ STEREO_ATTRS = [
     ("Left Raw Amplitude",  "dh_audio_left_raw",    "FLOAT"),
     ("Right Raw Amplitude", "dh_audio_right_raw",   "FLOAT"),
 ]
+
+# Public geometry effects use this exact ordering for their Audio Source menu.
+# Every entry maps directly to an output on DH Audio Spectrum Sample / Bridge.
+AUDIO_SOURCE_ITEMS = (
+    "Amplitude",
+    "Normalized",
+    "Raw Amplitude",
+    "Left Amplitude",
+    "Right Amplitude",
+    "Left Normalized",
+    "Right Normalized",
+    "Left Raw Amplitude",
+    "Right Raw Amplitude",
+)
+
+AUDIO_SOURCE_ATTRS = {
+    "Amplitude": "dh_audio_amp",
+    "Normalized": "dh_audio_norm",
+    "Raw Amplitude": "dh_audio_raw",
+    "Left Amplitude": "dh_audio_left_amp",
+    "Right Amplitude": "dh_audio_right_amp",
+    "Left Normalized": "dh_audio_left_norm",
+    "Right Normalized": "dh_audio_right_norm",
+    "Left Raw Amplitude": "dh_audio_left_raw",
+    "Right Raw Amplitude": "dh_audio_right_raw",
+}
 
 NAMED_BAND_ATTRS = [
     ("Total Volume", "dh_audio_total"),
@@ -809,6 +859,17 @@ def switch_bool_node(nodes, name, location, parent=None, label=None):
     return node
 
 
+def switch_vector_node(nodes, name, location, parent=None, label=None):
+    node = nodes.new("GeometryNodeSwitch")
+    node.name = name
+    node.label = label or name
+    node.input_type = "VECTOR"
+    if parent is not None:
+        node.parent = parent
+    node.location = location
+    return node
+
+
 def local_group_input(
     nodes,
     label,
@@ -877,6 +938,52 @@ def menu_switch_geometry(nodes, name, items, *, parent=None, location=(0, 0), la
         node.parent = parent
     node.location = location
     return node
+
+
+def menu_switch_float(nodes, name, items, *, parent=None, location=(0, 0), label=None):
+    node = nodes.new("GeometryNodeMenuSwitch")
+    node.name = name
+    node.label = label or name
+    node.data_type = "FLOAT"
+    node.enum_items.clear()
+    for item in items:
+        node.enum_items.new(item)
+    node.active_index = 0
+    node.width = 300
+    if parent is not None:
+        node.parent = parent
+    node.location = location
+    set_default(node, "Menu", items[0])
+    return node
+
+
+def new_audio_source_menu(tree, nodes, *, parent=None, description=""):
+    """Create the shared stereo-aware Audio Source interface menu.
+
+    Blender 5.2 does not preserve a Menu Switch definition copied from a
+    FLOAT data-type switch: the resulting interface enum is empty. A temporary
+    GEOMETRY Menu Switch reliably transports the same enum definition. The
+    template can be removed immediately after ``from_socket``; the interface
+    retains the items and the non-blank Amplitude default.
+    """
+    template = menu_switch_geometry(
+        nodes,
+        "Audio Source Interface Template",
+        AUDIO_SOURCE_ITEMS,
+        location=(0, 0),
+        label="Audio Source Interface Template",
+    )
+    socket = new_menu_socket_from(
+        tree,
+        "Audio Source",
+        template,
+        "Menu",
+        parent=parent,
+        default="Amplitude",
+        description=description,
+    )
+    nodes.remove(template)
+    return socket
 
 
 def assign_catalog_to_asset(tree):
@@ -2139,6 +2246,249 @@ def create_shader_map_group():
     return tree
 
 
+# =====================================================================
+# DH Audio Shader UV Transform
+# =====================================================================
+
+def create_shader_uv_transform():
+    """Apply one scalar factor to shader coordinates around a stable pivot."""
+    tree = bpy.data.node_groups.new(GROUP_SHADER_UV, "ShaderNodeTree")
+    tree["dh_role"] = "shader_uv_transform"
+
+    coordinates_panel = tree.interface.new_panel(
+        name="Coordinates",
+        description="Input coordinates and the audio/history/named-band factor",
+        default_closed=False,
+    )
+    offset_panel = tree.interface.new_panel(
+        name="Offset",
+        description="Constant and factor-driven coordinate translation",
+        default_closed=False,
+    )
+    scale_panel = tree.interface.new_panel(
+        name="Scale",
+        description="Pivot-centered constant and factor-driven scale",
+        default_closed=True,
+    )
+    rotation_panel = tree.interface.new_panel(
+        name="Rotation",
+        description="Pivot-centered Z rotation in radians/degrees UI units",
+        default_closed=True,
+    )
+    outputs_panel = tree.interface.new_panel(
+        name="Outputs",
+        description="Transformed coordinates and effective controls",
+        default_closed=False,
+    )
+
+    new_socket(
+        tree, "Vector", "INPUT", "NodeSocketVector",
+        parent=coordinates_panel,
+        default=(0.0, 0.0, 0.0),
+        description="Texture Coordinate, UV, Generated, Object, or another shader vector",
+    )
+    new_socket(
+        tree, "Factor", "INPUT", "NodeSocketFloat",
+        parent=coordinates_panel,
+        default=0.0,
+        description="Audio, named-band, or history value; shape it with DH Audio Shader Map",
+    )
+    new_socket(
+        tree, "Pivot", "INPUT", "NodeSocketVector",
+        parent=coordinates_panel,
+        default=(0.5, 0.5, 0.0),
+        description="Center used by Scale and Rotation",
+    )
+
+    new_socket(
+        tree, "Base Offset", "INPUT", "NodeSocketVector",
+        parent=offset_panel,
+        default=(0.0, 0.0, 0.0),
+        description="Constant coordinate offset",
+    )
+    new_socket(
+        tree, "Audio Offset", "INPUT", "NodeSocketVector",
+        parent=offset_panel,
+        default=(0.1, 0.0, 0.0),
+        description="Offset multiplied by Factor",
+    )
+
+    new_socket(
+        tree, "Base Scale", "INPUT", "NodeSocketVector",
+        parent=scale_panel,
+        default=(1.0, 1.0, 1.0),
+        description="Constant pivot-centered scale",
+    )
+    new_socket(
+        tree, "Audio Scale", "INPUT", "NodeSocketVector",
+        parent=scale_panel,
+        default=(0.0, 0.0, 0.0),
+        description="Additional scale multiplied by Factor",
+    )
+
+    new_socket(
+        tree, "Base Rotation", "INPUT", "NodeSocketFloatAngle",
+        parent=rotation_panel,
+        default=0.0,
+        min_value=-100000.0,
+        max_value=100000.0,
+        description="Constant Z rotation around Pivot",
+    )
+    new_socket(
+        tree, "Audio Rotation", "INPUT", "NodeSocketFloatAngle",
+        parent=rotation_panel,
+        default=0.0,
+        min_value=-100000.0,
+        max_value=100000.0,
+        description="Additional Z rotation multiplied by Factor",
+    )
+
+    new_socket(
+        tree, "Vector", "OUTPUT", "NodeSocketVector",
+        parent=outputs_panel,
+        description="Final transformed coordinates",
+    )
+    new_socket(
+        tree, "Offset", "OUTPUT", "NodeSocketVector",
+        parent=outputs_panel,
+        description="Base Offset + Audio Offset × Factor",
+    )
+    new_socket(
+        tree, "Scale", "OUTPUT", "NodeSocketVector",
+        parent=outputs_panel,
+        description="Base Scale + Audio Scale × Factor",
+    )
+    new_socket(
+        tree, "Rotation", "OUTPUT", "NodeSocketFloatAngle",
+        parent=outputs_panel,
+        description="Base Rotation + Audio Rotation × Factor",
+    )
+
+    nodes = tree.nodes
+    frame_values = make_frame(
+        nodes, "FRAME_UV_VALUES", "1  EFFECTIVE CONTROLS", (-900, 680), 1200
+    )
+    frame_transform = make_frame(
+        nodes, "FRAME_UV_TRANSFORM", "2  PIVOT TRANSFORM", (480, 680), 1350
+    )
+
+    offset_in = local_group_input(
+        nodes,
+        "Offset Controls",
+        ["Factor", "Base Offset", "Audio Offset"],
+        parent=frame_values,
+        location=(20, 300),
+        width=220,
+    )
+    scale_in = local_group_input(
+        nodes,
+        "Scale Controls",
+        ["Factor", "Base Scale", "Audio Scale"],
+        parent=frame_values,
+        location=(20, 20),
+        width=220,
+    )
+    rotation_in = local_group_input(
+        nodes,
+        "Rotation Controls",
+        ["Factor", "Base Rotation", "Audio Rotation"],
+        parent=frame_values,
+        location=(20, -260),
+        width=220,
+    )
+
+    scaled_audio_offset = vector_math_node(
+        nodes, "Scale Audio Offset", "SCALE", (300, 300), frame_values, "Audio Offset × Factor"
+    )
+    effective_offset = vector_math_node(
+        nodes, "Effective Offset", "ADD", (540, 300), frame_values, "Base + Audio Offset"
+    )
+    link(tree, offset_in, "Audio Offset", scaled_audio_offset, "Vector")
+    link(tree, offset_in, "Factor", scaled_audio_offset, "Scale")
+    link(tree, offset_in, "Base Offset", effective_offset, 0)
+    link(tree, scaled_audio_offset, "Vector", effective_offset, 1)
+
+    scaled_audio_scale = vector_math_node(
+        nodes, "Scale Audio Scale", "SCALE", (300, 20), frame_values, "Audio Scale × Factor"
+    )
+    effective_scale = vector_math_node(
+        nodes, "Effective Scale", "ADD", (540, 20), frame_values, "Base + Audio Scale"
+    )
+    link(tree, scale_in, "Audio Scale", scaled_audio_scale, "Vector")
+    link(tree, scale_in, "Factor", scaled_audio_scale, "Scale")
+    link(tree, scale_in, "Base Scale", effective_scale, 0)
+    link(tree, scaled_audio_scale, "Vector", effective_scale, 1)
+
+    scaled_audio_rotation = math_node(
+        nodes, "Scale Audio Rotation", "MULTIPLY", (300, -260), frame_values, "Audio Rotation × Factor"
+    )
+    effective_rotation = math_node(
+        nodes, "Effective Rotation", "ADD", (540, -260), frame_values, "Base + Audio Rotation"
+    )
+    link(tree, rotation_in, "Audio Rotation", scaled_audio_rotation, 0)
+    link(tree, rotation_in, "Factor", scaled_audio_rotation, 1)
+    link(tree, rotation_in, "Base Rotation", effective_rotation, 0)
+    link(tree, scaled_audio_rotation, "Value", effective_rotation, 1)
+
+    transform_in = local_group_input(
+        nodes,
+        "Coordinates + Pivot",
+        ["Vector", "Pivot"],
+        parent=frame_transform,
+        location=(20, 240),
+        width=220,
+    )
+    center = vector_math_node(
+        nodes, "Center on Pivot", "SUBTRACT", (290, 240), frame_transform, "Vector - Pivot"
+    )
+    scale_vector = vector_math_node(
+        nodes, "Apply Effective Scale", "MULTIPLY", (530, 240), frame_transform, "Centered × Scale"
+    )
+    rotate = nodes.new("ShaderNodeVectorRotate")
+    rotate.name = "Apply Effective Rotation"
+    rotate.label = "Rotate Around Z"
+    rotate.rotation_type = "AXIS_ANGLE"
+    rotate.invert = False
+    rotate.parent = frame_transform
+    rotate.location = (770, 240)
+    rotate.width = 230
+    set_default(rotate, "Center", (0.0, 0.0, 0.0))
+    set_default(rotate, "Axis", (0.0, 0.0, 1.0))
+    restore_pivot = vector_math_node(
+        nodes, "Restore Pivot", "ADD", (1030, 240), frame_transform, "Rotated + Pivot"
+    )
+    final_vector = vector_math_node(
+        nodes, "Apply Effective Offset", "ADD", (1270, 240), frame_transform, "Pivoted + Offset"
+    )
+
+    link(tree, transform_in, "Vector", center, 0)
+    link(tree, transform_in, "Pivot", center, 1)
+    link(tree, center, "Vector", scale_vector, 0)
+    link(tree, effective_scale, "Vector", scale_vector, 1)
+    link(tree, scale_vector, "Vector", rotate, "Vector")
+    link(tree, effective_rotation, "Value", rotate, "Angle")
+    link(tree, rotate, "Vector", restore_pivot, 0)
+    link(tree, transform_in, "Pivot", restore_pivot, 1)
+    link(tree, restore_pivot, "Vector", final_vector, 0)
+    link(tree, effective_offset, "Vector", final_vector, 1)
+
+    group_out = nodes.new("NodeGroupOutput")
+    group_out.location = (2500, 220)
+    group_out.width = 260
+    group_out.is_active_output = True
+    link(tree, final_vector, "Vector", group_out, "Vector")
+    link(tree, effective_offset, "Vector", group_out, "Offset")
+    link(tree, effective_scale, "Vector", group_out, "Scale")
+    link(tree, effective_rotation, "Value", group_out, "Rotation")
+
+    mark_asset(
+        tree,
+        "Transform shader UV or texture coordinates with an audio/history factor: "
+        "pivot-centered scale and rotation plus animated offset.",
+    )
+    return tree
+
+
 
 # =====================================================================
 # 6. DH Audio Frequency Map
@@ -2781,6 +3131,115 @@ def create_internal_store_spectrum_bridge():
     mark_internal(
         tree,
         "Internal point/instance writer for sampled standard and stereo spectrum attributes",
+    )
+    return tree
+
+
+# =====================================================================
+# Internal helper: Store sampled spectrum fields on mesh faces
+# =====================================================================
+
+def create_internal_store_spectrum_face():
+    """Write the complete standard spectrum schema on the face domain."""
+    tree = bpy.data.node_groups.new(
+        INTERNAL_STORE_SPECTRUM_FACE,
+        "GeometryNodeTree",
+    )
+    tree["dh_role"] = "internal_store_spectrum_face"
+
+    controls_panel = tree.interface.new_panel(
+        name="Storage Controls",
+        default_closed=False,
+    )
+    primary_panel = tree.interface.new_panel(
+        name="Band Values",
+        default_closed=False,
+    )
+    stereo_panel = tree.interface.new_panel(
+        name="Stereo Values",
+        default_closed=True,
+    )
+    metadata_panel = tree.interface.new_panel(
+        name="Frequency Metadata",
+        default_closed=True,
+    )
+
+    new_socket(
+        tree, "Geometry", "INPUT", "NodeSocketGeometry",
+        parent=controls_panel,
+    )
+    new_socket(
+        tree, "Selection", "INPUT", "NodeSocketBool",
+        parent=controls_panel, default=True, structure_type="FIELD",
+    )
+
+    attribute_specs = list(SPECTRUM_ATTRS) + list(STEREO_ATTRS)
+    for input_name, _attr_name, dtype in attribute_specs:
+        if (input_name, _attr_name, dtype) in STEREO_ATTRS:
+            panel = stereo_panel
+        elif input_name in {
+            "Low Frequency",
+            "Center Frequency",
+            "High Frequency",
+            "Bandwidth",
+        }:
+            panel = metadata_panel
+        else:
+            panel = primary_panel
+        socket_type = "NodeSocketInt" if dtype == "INT" else "NodeSocketFloat"
+        new_socket(
+            tree, input_name, "INPUT", socket_type,
+            parent=panel, default=0, structure_type="FIELD",
+        )
+    new_socket(tree, "Geometry", "OUTPUT", "NodeSocketGeometry")
+
+    nodes = tree.nodes
+    frame = make_frame(
+        nodes,
+        "FRAME_FACE_ATTRIBUTES",
+        "FACE DOMAIN ATTRIBUTE TRANSPORT",
+        (-900, 700),
+        3100,
+    )
+    value_names = [name for name, _attr, _dtype in attribute_specs]
+    face_in = local_group_input(
+        nodes,
+        "Face Attribute Fields",
+        ["Geometry", "Selection"] + value_names,
+        parent=frame,
+        location=(20, 260),
+        width=250,
+    )
+
+    previous = face_in
+    previous_socket = "Geometry"
+    for index, (input_name, attr_name, dtype) in enumerate(attribute_specs):
+        row = index // 4
+        column = index % 4
+        layout_column = column if row % 2 == 0 else 3 - column
+        store = store_named_attribute_node(
+            nodes,
+            attr_name,
+            dtype,
+            "FACE",
+            parent=frame,
+            location=(600 + layout_column * 560, 400 - row * 260),
+            label=input_name,
+        )
+        link(tree, previous, previous_socket, store, "Geometry")
+        link(tree, face_in, "Selection", store, "Selection")
+        link(tree, face_in, input_name, store, "Value")
+        previous = store
+        previous_socket = "Geometry"
+
+    group_out = nodes.new("NodeGroupOutput")
+    group_out.location = (3200, 100)
+    group_out.is_active_output = True
+    link(tree, previous, previous_socket, group_out, "Geometry")
+
+    mark_internal(
+        tree,
+        "Internal face-domain writer for sampled standard and stereo spectrum attributes",
     )
     return tree
 
@@ -4210,6 +4669,592 @@ def create_spectrum_bridge(spectrum_sample_group, store_bridge_group):
         tree,
         "Map reusable spectrum bands across arbitrary geometry or instances, "
         "store the standard material attributes, and expose the sampled fields directly.",
+    )
+    return tree
+
+
+# =====================================================================
+# DH Audio Mesh Deform
+# =====================================================================
+
+def create_mesh_deform(spectrum_bridge_group):
+    """Displace arbitrary point geometry with reusable spectrum fields."""
+    tree = bpy.data.node_groups.new(GROUP_MESH_DEFORM, "GeometryNodeTree")
+    tree["dh_role"] = "spectrum_mesh_deform"
+    nodes = tree.nodes
+
+    source_panel = tree.interface.new_panel(
+        name="Geometry & Spectrum",
+        description="Target geometry and reusable Analyzer-compatible carrier",
+        default_closed=False,
+    )
+    mapping_panel = tree.interface.new_panel(
+        name="Band Mapping",
+        description="Choose the sampled band and audio value per target point",
+        default_closed=False,
+    )
+    deformation_panel = tree.interface.new_panel(
+        name="Deformation",
+        description="Audio-driven point displacement controls",
+        default_closed=False,
+    )
+    storage_panel = tree.interface.new_panel(
+        name="Attribute Storage",
+        description="Optional material-ready standard attribute transport",
+        default_closed=True,
+    )
+    outputs_panel = tree.interface.new_panel(
+        name="Outputs",
+        description="Deformed geometry and the fields used to produce it",
+        default_closed=False,
+    )
+
+    new_socket(
+        tree, "Geometry", "INPUT", "NodeSocketGeometry",
+        parent=source_panel,
+        description="Mesh or curve control points to displace",
+        structure_type="SINGLE",
+    )
+    new_socket(
+        tree, "Spectrum", "INPUT", "NodeSocketGeometry",
+        parent=source_panel,
+        description="Reusable carrier from Analyzer, Stereo Analyzer, or Spectrum Bars",
+        structure_type="SINGLE",
+    )
+    new_socket(
+        tree, "Band", "INPUT", "NodeSocketInt",
+        parent=mapping_panel,
+        default=0, min_value=0, max_value=511,
+        description="Zero-based band field evaluated on target points",
+        structure_type="FIELD",
+    )
+    new_socket(
+        tree, "Selection", "INPUT", "NodeSocketBool",
+        parent=mapping_panel,
+        default=True,
+        description="Points to displace and receive stored audio attributes",
+        structure_type="FIELD",
+    )
+    new_audio_source_menu(
+        tree,
+        nodes,
+        parent=mapping_panel,
+        description=(
+            "Amplitude/Normalized/Raw from mono carriers or paired Left/Right "
+            "values from Stereo Analyzer carriers"
+        ),
+    )
+
+    new_socket(
+        tree, "Use Normals", "INPUT", "NodeSocketBool",
+        parent=deformation_panel,
+        default=True,
+        description="Displace along the evaluated surface normal instead of Direction",
+        structure_type="SINGLE",
+    )
+    new_socket(
+        tree, "Direction", "INPUT", "NodeSocketVector",
+        parent=deformation_panel,
+        default=(0.0, 0.0, 1.0),
+        description="Per-point displacement direction when Use Normals is disabled",
+        structure_type="FIELD",
+    )
+    new_socket(
+        tree, "Strength", "INPUT", "NodeSocketFloatDistance",
+        parent=deformation_panel,
+        default=1.0, min_value=-100000.0, max_value=100000.0,
+        description="Distance multiplier applied after subtracting Center",
+        structure_type="SINGLE",
+    )
+    new_socket(
+        tree, "Center", "INPUT", "NodeSocketFloat",
+        parent=deformation_panel,
+        default=0.0, min_value=-100000.0, max_value=100000.0,
+        description="Audio value treated as zero displacement",
+        structure_type="SINGLE",
+    )
+
+    new_socket(
+        tree, "Store on Points", "INPUT", "NodeSocketBool",
+        parent=storage_panel,
+        default=True,
+        description="Store standard attributes on deformed mesh/curve points",
+        structure_type="SINGLE",
+    )
+    new_socket(
+        tree, "Store on Instances", "INPUT", "NodeSocketBool",
+        parent=storage_panel,
+        default=False,
+        description="Also store standard attributes on any untouched instance components",
+        structure_type="SINGLE",
+    )
+
+    new_socket(
+        tree, "Geometry", "OUTPUT", "NodeSocketGeometry",
+        parent=outputs_panel,
+        description="Audio-displaced geometry carrying enabled standard attributes",
+        structure_type="SINGLE",
+    )
+    new_socket(
+        tree, "Audio Value", "OUTPUT", "NodeSocketFloat",
+        parent=outputs_panel,
+        description="Selected audio source before centering and strength",
+        structure_type="FIELD",
+    )
+    new_socket(
+        tree, "Displacement", "OUTPUT", "NodeSocketFloatDistance",
+        parent=outputs_panel,
+        description="Signed displacement distance after Center and Strength",
+        structure_type="FIELD",
+    )
+    new_socket(
+        tree, "Offset", "OUTPUT", "NodeSocketVector",
+        parent=outputs_panel,
+        description="Final per-point offset vector",
+        structure_type="FIELD",
+    )
+
+    frame_sample = make_frame(
+        nodes, "FRAME_DEFORM_SAMPLE", "1  SAMPLE + TRANSPORT", (-900, 700), 1250
+    )
+    frame_deform = make_frame(
+        nodes, "FRAME_DEFORM_POINTS", "2  POINT DEFORMATION", (520, 700), 1250
+    )
+
+    source_in = local_group_input(
+        nodes,
+        "Target + Spectrum",
+        [
+            "Geometry", "Spectrum", "Band", "Selection", "Audio Source",
+            "Store on Points", "Store on Instances",
+        ],
+        parent=frame_sample,
+        location=(20, 260),
+        width=250,
+    )
+    bridge = nodes.new("GeometryNodeGroup")
+    bridge.name = "Sample and Store Spectrum"
+    bridge.label = "Spectrum Bridge"
+    bridge.node_tree = spectrum_bridge_group
+    bridge.parent = frame_sample
+    bridge.location = (330, 220)
+    bridge.width = 340
+    for socket_name in (
+        "Geometry", "Spectrum", "Band", "Selection",
+        "Store on Points", "Store on Instances",
+    ):
+        link(tree, source_in, socket_name, bridge, socket_name)
+
+    value_switch = menu_switch_float(
+        nodes,
+        "Select Deform Audio",
+        AUDIO_SOURCE_ITEMS,
+        parent=frame_sample,
+        location=(760, 220),
+        label="Audio Source",
+    )
+    link(tree, source_in, "Audio Source", value_switch, "Menu")
+    for item in AUDIO_SOURCE_ITEMS:
+        link(tree, bridge, item, value_switch, item)
+
+    deform_in = local_group_input(
+        nodes,
+        "Deformation Controls",
+        ["Selection", "Use Normals", "Direction", "Strength", "Center"],
+        parent=frame_deform,
+        location=(20, 260),
+        width=240,
+    )
+    centered = math_node(
+        nodes, "Centered Audio", "SUBTRACT", (310, 300), frame_deform, "Audio - Center"
+    )
+    displacement = math_node(
+        nodes, "Displacement", "MULTIPLY", (520, 300), frame_deform, "Centered × Strength"
+    )
+    link(tree, value_switch, "Output", centered, 0)
+    link(tree, deform_in, "Center", centered, 1)
+    link(tree, centered, "Value", displacement, 0)
+    link(tree, deform_in, "Strength", displacement, 1)
+
+    normal = nodes.new("GeometryNodeInputNormal")
+    normal.name = "Surface Normal"
+    normal.label = "Surface Normal"
+    normal.parent = frame_deform
+    normal.location = (310, 40)
+    direction = switch_vector_node(
+        nodes,
+        "Direction or Normal",
+        (520, 40),
+        frame_deform,
+        "Direction / Surface Normal",
+    )
+    link(tree, deform_in, "Use Normals", direction, "Switch")
+    link(tree, deform_in, "Direction", direction, "False")
+    link(tree, normal, "Normal", direction, "True")
+
+    offset = vector_math_node(
+        nodes, "Final Offset", "SCALE", (760, 160), frame_deform, "Direction × Displacement"
+    )
+    link(tree, direction, "Output", offset, "Vector")
+    link(tree, displacement, "Value", offset, "Scale")
+
+    set_position = nodes.new("GeometryNodeSetPosition")
+    set_position.name = "Audio Set Position"
+    set_position.label = "Displace Selected Points"
+    set_position.parent = frame_deform
+    set_position.location = (1010, 160)
+    set_position.width = 240
+    link(tree, bridge, "Geometry", set_position, "Geometry")
+    link(tree, deform_in, "Selection", set_position, "Selection")
+    link(tree, offset, "Vector", set_position, "Offset")
+
+    group_out = nodes.new("NodeGroupOutput")
+    group_out.location = (1950, 260)
+    group_out.width = 260
+    group_out.is_active_output = True
+    link(tree, set_position, "Geometry", group_out, "Geometry")
+    link(tree, value_switch, "Output", group_out, "Audio Value")
+    link(tree, displacement, "Value", group_out, "Displacement")
+    link(tree, offset, "Vector", group_out, "Offset")
+
+    mark_asset(
+        tree,
+        "Displace arbitrary mesh or curve points from a reusable mono/stereo spectrum, "
+        "with per-point band mapping and material-ready attributes.",
+    )
+    return tree
+
+
+# =====================================================================
+# DH Audio Mesh Extrude
+# =====================================================================
+
+def create_mesh_extrude(spectrum_sample_group, face_store_group):
+    """Extrude mesh faces with reusable spectrum fields and face attributes."""
+    tree = bpy.data.node_groups.new(GROUP_MESH_EXTRUDE, "GeometryNodeTree")
+    tree["dh_role"] = "spectrum_mesh_extrude"
+    nodes = tree.nodes
+
+    source_panel = tree.interface.new_panel(
+        name="Mesh & Spectrum",
+        description="Target mesh and reusable Analyzer-compatible carrier",
+        default_closed=False,
+    )
+    mapping_panel = tree.interface.new_panel(
+        name="Band Mapping",
+        description="Choose the sampled band and audio value per face",
+        default_closed=False,
+    )
+    extrusion_panel = tree.interface.new_panel(
+        name="Extrusion",
+        description="Face offset, normal/direction, and top scaling",
+        default_closed=False,
+    )
+    outputs_panel = tree.interface.new_panel(
+        name="Outputs",
+        description="Extruded mesh, selections, and diagnostic fields",
+        default_closed=False,
+    )
+
+    new_socket(
+        tree, "Mesh", "INPUT", "NodeSocketGeometry",
+        parent=source_panel,
+        description="Mesh faces to extrude",
+        structure_type="SINGLE",
+    )
+    new_socket(
+        tree, "Spectrum", "INPUT", "NodeSocketGeometry",
+        parent=source_panel,
+        description="Reusable carrier from Analyzer, Stereo Analyzer, or Spectrum Bars",
+        structure_type="SINGLE",
+    )
+    new_socket(
+        tree, "Band", "INPUT", "NodeSocketInt",
+        parent=mapping_panel,
+        default=0, min_value=0, max_value=511,
+        description="Zero-based band field evaluated on target faces",
+        structure_type="FIELD",
+    )
+    new_socket(
+        tree, "Selection", "INPUT", "NodeSocketBool",
+        parent=mapping_panel,
+        default=True,
+        description="Faces to extrude and receive standard audio attributes",
+        structure_type="FIELD",
+    )
+    new_audio_source_menu(
+        tree,
+        nodes,
+        parent=mapping_panel,
+        description=(
+            "Amplitude/Normalized/Raw from mono carriers or paired Left/Right "
+            "values from Stereo Analyzer carriers"
+        ),
+    )
+
+    new_socket(
+        tree, "Use Normals", "INPUT", "NodeSocketBool",
+        parent=extrusion_panel,
+        default=True,
+        description="Extrude along face normals instead of Direction",
+        structure_type="SINGLE",
+    )
+    new_socket(
+        tree, "Direction", "INPUT", "NodeSocketVector",
+        parent=extrusion_panel,
+        default=(0.0, 0.0, 1.0),
+        description="Per-face offset direction when Use Normals is disabled",
+        structure_type="FIELD",
+    )
+    new_socket(
+        tree, "Strength", "INPUT", "NodeSocketFloatDistance",
+        parent=extrusion_panel,
+        default=1.0, min_value=-100000.0, max_value=100000.0,
+        description="Extrusion distance multiplier applied after Center",
+        structure_type="SINGLE",
+    )
+    new_socket(
+        tree, "Center", "INPUT", "NodeSocketFloat",
+        parent=extrusion_panel,
+        default=0.0, min_value=-100000.0, max_value=100000.0,
+        description="Audio value treated as zero extrusion",
+        structure_type="SINGLE",
+    )
+    new_socket(
+        tree, "Base Top Scale", "INPUT", "NodeSocketFloat",
+        parent=extrusion_panel,
+        default=1.0, min_value=-1000.0, max_value=1000.0,
+        description="Constant scale applied to extruded top faces",
+        structure_type="SINGLE",
+    )
+    new_socket(
+        tree, "Audio Top Scale", "INPUT", "NodeSocketFloat",
+        parent=extrusion_panel,
+        default=0.0, min_value=-1000.0, max_value=1000.0,
+        description="Additional top-face scale multiplied by Audio Value",
+        structure_type="SINGLE",
+    )
+
+    new_socket(
+        tree, "Mesh", "OUTPUT", "NodeSocketGeometry",
+        parent=outputs_panel,
+        description="Extruded mesh with standard spectrum/stereo face attributes",
+        structure_type="SINGLE",
+    )
+    new_socket(
+        tree, "Top", "OUTPUT", "NodeSocketBool",
+        parent=outputs_panel,
+        description="Anonymous selection of extruded top faces",
+        structure_type="FIELD",
+    )
+    new_socket(
+        tree, "Side", "OUTPUT", "NodeSocketBool",
+        parent=outputs_panel,
+        description="Anonymous selection of generated side faces",
+        structure_type="FIELD",
+    )
+    new_socket(
+        tree, "Audio Value", "OUTPUT", "NodeSocketFloat",
+        parent=outputs_panel,
+        description="Selected audio source before centering and strength",
+        structure_type="FIELD",
+    )
+    new_socket(
+        tree, "Displacement", "OUTPUT", "NodeSocketFloatDistance",
+        parent=outputs_panel,
+        description="Signed extrusion distance after Center and Strength",
+        structure_type="FIELD",
+    )
+    new_socket(
+        tree, "Top Scale", "OUTPUT", "NodeSocketFloat",
+        parent=outputs_panel,
+        description="Final top-face scale",
+        structure_type="FIELD",
+    )
+
+    frame_sample = make_frame(
+        nodes, "FRAME_EXTRUDE_SAMPLE", "1  FACE SAMPLE + ATTRIBUTES", (-900, 700), 1600
+    )
+    frame_field = make_frame(
+        nodes, "FRAME_EXTRUDE_FIELD", "2  FACE AUDIO FIELD", (900, 700), 1400
+    )
+    frame_extrude = make_frame(
+        nodes, "FRAME_EXTRUDE_FACES", "3  EXTRUDE + SCALE", (2500, 700), 1800
+    )
+
+    source_in = local_group_input(
+        nodes,
+        "Mesh + Spectrum",
+        ["Mesh", "Spectrum", "Band", "Selection"],
+        parent=frame_sample,
+        location=(20, 300),
+        width=240,
+    )
+    sample = nodes.new("GeometryNodeGroup")
+    sample.name = "Sample Face Spectrum"
+    sample.label = "Spectrum Sample"
+    sample.node_tree = spectrum_sample_group
+    sample.parent = frame_sample
+    sample.location = (310, 300)
+    sample.width = 320
+    link(tree, source_in, "Spectrum", sample, "Spectrum")
+    link(tree, source_in, "Band", sample, "Band")
+
+    face_store = nodes.new("GeometryNodeGroup")
+    face_store.name = "Store Face Spectrum"
+    face_store.label = "Face Attribute Transport"
+    face_store.node_tree = face_store_group
+    face_store.parent = frame_sample
+    face_store.location = (1130, 180)
+    face_store.width = 350
+    link(tree, source_in, "Mesh", face_store, "Geometry")
+    link(tree, source_in, "Selection", face_store, "Selection")
+    for output_name, _attr_name, _dtype in list(SPECTRUM_ATTRS) + list(STEREO_ATTRS):
+        link(tree, sample, output_name, face_store, output_name)
+
+    field_in = local_group_input(
+        nodes,
+        "Audio Source",
+        ["Audio Source"],
+        parent=frame_field,
+        location=(20, 340),
+        width=220,
+    )
+    face_value_switch = menu_switch_float(
+        nodes,
+        "Select Stored Face Audio",
+        AUDIO_SOURCE_ITEMS,
+        parent=frame_field,
+        location=(1020, 220),
+        label="Stored Face Audio Source",
+    )
+    link(tree, field_in, "Audio Source", face_value_switch, "Menu")
+    for index, item in enumerate(AUDIO_SOURCE_ITEMS):
+        column = index % 3
+        row = index // 3
+        attr = named_attribute_node(
+            nodes,
+            AUDIO_SOURCE_ATTRS[item],
+            "FLOAT",
+            parent=frame_field,
+            location=(300 + column * 235, 420 - row * 220),
+            label=item,
+        )
+        attr.width = 205
+        link(tree, attr, "Attribute", face_value_switch, item)
+
+    extrude_in = local_group_input(
+        nodes,
+        "Extrusion Controls",
+        [
+            "Selection", "Use Normals", "Direction", "Strength", "Center",
+            "Base Top Scale", "Audio Top Scale",
+        ],
+        parent=frame_extrude,
+        location=(20, 320),
+        width=250,
+    )
+    centered = math_node(
+        nodes, "Centered Audio", "SUBTRACT", (320, 360), frame_extrude, "Audio - Center"
+    )
+    displacement = math_node(
+        nodes, "Extrusion Distance", "MULTIPLY", (530, 360), frame_extrude, "Centered × Strength"
+    )
+    link(tree, face_value_switch, "Output", centered, 0)
+    link(tree, extrude_in, "Center", centered, 1)
+    link(tree, centered, "Value", displacement, 0)
+    link(tree, extrude_in, "Strength", displacement, 1)
+
+    direction_offset = vector_math_node(
+        nodes, "Direction Offset", "SCALE", (320, 80), frame_extrude,
+        "Direction × Distance",
+    )
+    link(tree, extrude_in, "Direction", direction_offset, "Vector")
+    link(tree, displacement, "Value", direction_offset, "Scale")
+
+    normal_extrude = nodes.new("GeometryNodeExtrudeMesh")
+    normal_extrude.name = "Extrude Along Normals"
+    normal_extrude.label = "Normal / Individual Faces"
+    normal_extrude.mode = "FACES"
+    normal_extrude.parent = frame_extrude
+    normal_extrude.location = (790, 300)
+    normal_extrude.width = 260
+    set_default(normal_extrude, "Individual", True)
+    link(tree, face_store, "Geometry", normal_extrude, "Mesh")
+    link(tree, extrude_in, "Selection", normal_extrude, "Selection")
+    link(tree, displacement, "Value", normal_extrude, "Offset Scale")
+
+    direction_extrude = nodes.new("GeometryNodeExtrudeMesh")
+    direction_extrude.name = "Extrude Along Direction"
+    direction_extrude.label = "Direction / Connected Region"
+    direction_extrude.mode = "FACES"
+    direction_extrude.parent = frame_extrude
+    direction_extrude.location = (790, -80)
+    direction_extrude.width = 260
+    set_default(direction_extrude, "Individual", False)
+    link(tree, face_store, "Geometry", direction_extrude, "Mesh")
+    link(tree, extrude_in, "Selection", direction_extrude, "Selection")
+    link(tree, direction_offset, "Vector", direction_extrude, "Offset")
+
+    geometry_mode = switch_geometry_node(
+        nodes, "Select Extrusion Geometry", (1120, 300), frame_extrude,
+        "Direction / Normal Geometry",
+    )
+    top_mode = switch_bool_node(
+        nodes, "Select Top Field", (1120, 20), frame_extrude,
+        "Direction / Normal Top",
+    )
+    side_mode = switch_bool_node(
+        nodes, "Select Side Field", (1120, -200), frame_extrude,
+        "Direction / Normal Side",
+    )
+    for mode_switch in (geometry_mode, top_mode, side_mode):
+        link(tree, extrude_in, "Use Normals", mode_switch, "Switch")
+    link(tree, direction_extrude, "Mesh", geometry_mode, "False")
+    link(tree, normal_extrude, "Mesh", geometry_mode, "True")
+    link(tree, direction_extrude, "Top", top_mode, "False")
+    link(tree, normal_extrude, "Top", top_mode, "True")
+    link(tree, direction_extrude, "Side", side_mode, "False")
+    link(tree, normal_extrude, "Side", side_mode, "True")
+
+    audio_scale = math_node(
+        nodes, "Audio Top Scale", "MULTIPLY", (790, -480), frame_extrude, "Audio × Scale"
+    )
+    final_scale = math_node(
+        nodes, "Final Top Scale", "ADD", (1020, -480), frame_extrude, "Base + Audio Scale"
+    )
+    link(tree, face_value_switch, "Output", audio_scale, 0)
+    link(tree, extrude_in, "Audio Top Scale", audio_scale, 1)
+    link(tree, extrude_in, "Base Top Scale", final_scale, 0)
+    link(tree, audio_scale, "Value", final_scale, 1)
+
+    scale_top = nodes.new("GeometryNodeScaleElements")
+    scale_top.name = "Scale Extruded Tops"
+    scale_top.label = "Scale Top Faces"
+    scale_top.domain = "FACE"
+    scale_top.parent = frame_extrude
+    scale_top.location = (1450, 300)
+    scale_top.width = 250
+    set_default(scale_top, "Scale Mode", "Uniform")
+    link(tree, geometry_mode, "Output", scale_top, "Geometry")
+    link(tree, top_mode, "Output", scale_top, "Selection")
+    link(tree, final_scale, "Value", scale_top, "Scale")
+
+    group_out = nodes.new("NodeGroupOutput")
+    group_out.location = (4550, 280)
+    group_out.width = 280
+    group_out.is_active_output = True
+    link(tree, scale_top, "Geometry", group_out, "Mesh")
+    link(tree, top_mode, "Output", group_out, "Top")
+    link(tree, side_mode, "Output", group_out, "Side")
+    link(tree, face_value_switch, "Output", group_out, "Audio Value")
+    link(tree, displacement, "Value", group_out, "Displacement")
+    link(tree, final_scale, "Value", group_out, "Top Scale")
+
+    mark_asset(
+        tree,
+        "Extrude mesh faces from a reusable mono/stereo spectrum with per-face band "
+        "mapping, top scaling, and standard face-domain material attributes.",
     )
     return tree
 
@@ -6740,6 +7785,10 @@ The design is intentionally split into:
     TRANSPORT   named attributes for geometry and materials
     SHADE       read and reshape those attributes in materials
 
+This is a peer beta. The public asset names and standard dh_audio_* attributes
+are compatibility-sensitive, but newly introduced beta controls may still be
+refined from testing feedback before a stable release.
+
 
 ======================================================================
 NODE REFERENCE
@@ -6814,6 +7863,18 @@ DH Audio Spectrum Bridge
     and Selection remain per-element fields, and all sampled values are also
     exposed directly for extrusion, displacement, scaling, and rotation.
 
+DH Audio Mesh Deform
+    Displaces arbitrary mesh or curve points from a reusable mono or stereo
+    spectrum. Band and Selection are fields. Audio Source chooses Amplitude,
+    Normalized, Raw, or paired Left/Right values, and the standard attributes
+    can be stored on points or instances for Material Reader.
+
+DH Audio Mesh Extrude
+    Extrudes mesh faces from the same reusable spectrum. Normal mode extrudes
+    each selected face along its own normal; Direction mode extrudes the
+    connected selected region along a vector. Standard spectrum and stereo
+    attributes are stored on faces and propagate to generated top/side faces.
+
 DH Audio Sample Range
     Standalone direct sampler for one custom Low Hz -> High Hz range. Use it
     when you want one reaction value and do not need a complete spectrum.
@@ -6852,6 +7913,11 @@ DH Audio Shader Map
     clamps and inverts it, applies a sign-safe power curve, and remaps it into
     a final output range. Use it for amplitude thresholds, named bands, UV
     controls, and Spectrum History fades.
+
+DH Audio Shader UV Transform
+    Applies audio-, named-band-, or history-driven offset, pivot scale, and Z
+    rotation to shader coordinates. Effective Offset, Scale, and Rotation are
+    exposed for debugging or reuse.
 
 
 ======================================================================
@@ -7203,6 +8269,35 @@ also intentional. Disable any domain that no downstream consumer needs.
 
 
 ======================================================================
+RECIPE 7C: DEFORM OR EXTRUDE YOUR OWN GEOMETRY
+======================================================================
+
+    DH Audio Analyzer [Spectrum]
+        -> DH Audio Mesh Deform [Spectrum]
+
+    Any mesh or curve [Geometry]
+        -> DH Audio Mesh Deform [Geometry]
+
+Use Index modulo Analyzer Bands for a repeating per-point Band field. Choose
+Audio Source = Left or Right when the carrier comes from Stereo Analyzer.
+Use Normals moves points along their normals; turn it off to use Direction.
+
+For faces:
+
+    DH Audio Analyzer [Spectrum]
+        -> DH Audio Mesh Extrude [Spectrum]
+
+    Any mesh [Mesh]
+        -> DH Audio Mesh Extrude [Mesh]
+
+Band evaluates on faces. Normal mode creates independent face-normal height;
+Direction mode extrudes the connected selected region along Direction. Top and
+Side are anonymous fields for immediate Set Material or other downstream use.
+Material Reader uses the face-domain spectrum attributes with Use Instancer
+off. Feed a stereo carrier to select paired Left/Right audio values.
+
+
+======================================================================
 RECIPE 8: SAMPLE ONE CUSTOM FREQUENCY RANGE
 ======================================================================
 
@@ -7327,6 +8422,45 @@ Typical newest-to-oldest fade:
 
 Shader Map also works with Amplitude and named bands. Set To Min / To Max to
 the exact range needed by a UV offset, displacement, mix factor, or emission.
+
+For texture motion:
+
+    Texture Coordinate [UV]
+        -> DH Audio Shader UV Transform [Vector]
+    Material Reader / Shader Map [Value]
+        -> DH Audio Shader UV Transform [Factor]
+        -> Image Texture [Vector]
+
+Offset is applied after pivot-centered Scale and Z Rotation. History Position
+is especially useful for giving waterfall rows different texture positions.
+
+
+======================================================================
+BETA CONSTRAINTS
+======================================================================
+
+    Sound is required on every analyzer or direct sampler. Blender exposes a
+    missing Sound as zero audio, which is indistinguishable from intentional
+    silence inside Geometry Nodes; the toolkit cannot display a reliable
+    in-graph missing-sound warning.
+
+    Left/Right Audio Source choices require a Stereo Analyzer carrier. On a
+    mono carrier those paired attributes are absent and read as zero.
+
+    Band and Selection evaluate on the target domain. Index means point index
+    in Mesh Deform, face index in Mesh Extrude, and instance index when using
+    instance-domain bridges.
+
+    Mesh Deform changes real point geometry. Realize instances first if their
+    vertices must deform; otherwise use Spectrum Bridge Store on Instances for
+    per-instance shader data or Spectrum Instances for transform animation.
+
+    Spectrum History and Temporal Response contain Simulation Zones. Play the
+    timeline sequentially or bake before relying on a complete cached result.
+
+    Geometry Nodes fields do not directly cross into the Compositor. A future
+    compositor layer needs an explicit transport such as rendered attributes,
+    passes, images, or scene-level values; it is not part of this beta.
 
 
 ======================================================================
@@ -7547,12 +8681,14 @@ def main():
     spectrum_history = create_spectrum_history()
     shader_response = create_shader_response_group()
     shader_map = create_shader_map_group()
+    shader_uv = create_shader_uv_transform()
 
     frequency_map = create_frequency_map()
     frequency_selection = create_frequency_selection()
     store_spectrum = create_internal_store_spectrum()
     store_stereo = create_internal_store_stereo()
     store_spectrum_bridge = create_internal_store_spectrum_bridge()
+    store_spectrum_face = create_internal_store_spectrum_face()
     named_map = create_internal_named_band_map()
     named_meta_store = create_internal_store_named_metadata()
     named_store = create_internal_store_named_bands()
@@ -7570,6 +8706,8 @@ def main():
         spectrum_sample,
         store_spectrum_bridge,
     )
+    mesh_deform = create_mesh_deform(spectrum_bridge)
+    mesh_extrude = create_mesh_extrude(spectrum_sample, store_spectrum_face)
     sample_range = create_sample_range(response)
     named_bands = create_named_bands(named_map, named_meta_store, named_store)
 
@@ -7586,11 +8724,13 @@ def main():
         spectrum_history,
         shader_response,
         shader_map,
+        shader_uv,
         frequency_map,
         frequency_selection,
         store_spectrum,
         store_stereo,
         store_spectrum_bridge,
+        store_spectrum_face,
         named_map,
         named_meta_store,
         named_store,
@@ -7602,6 +8742,8 @@ def main():
         query,
         spectrum_sample,
         spectrum_bridge,
+        mesh_deform,
+        mesh_extrude,
         sample_range,
         named_bands,
         spectrum_instances,
@@ -7635,6 +8777,8 @@ def main():
         query,
         spectrum_sample,
         spectrum_bridge,
+        mesh_deform,
+        mesh_extrude,
         sample_range,
         named_bands,
         spectrum_instances,
@@ -7649,6 +8793,7 @@ def main():
     print(f"  - {material_reader.name}")
     print(f"  - {shader_response.name}")
     print(f"  - {shader_map.name}")
+    print(f"  - {shader_uv.name}")
 
     print()
     print("Architecture:")
@@ -7660,6 +8805,8 @@ def main():
     print("  Analyzer Spectrum -> Frequency Selection -> downstream Selection inputs")
     print("  Analyzer Spectrum -> Instances / Band Query / Spectrum Sample")
     print("  Spectrum + arbitrary Geometry -> Spectrum Bridge -> material-ready attributes")
+    print("  Spectrum + arbitrary Geometry -> Mesh Deform / Mesh Extrude")
+    print("  Material Reader / Shader Map -> Shader UV Transform -> texture coordinates")
     print("  Spectrum Bars     -> standalone Analyzer wrapper + compatible Spectrum Points")
     print("  Audio Bands       -> named musical ranges + integrated attribute bridge")
 

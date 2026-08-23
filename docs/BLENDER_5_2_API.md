@@ -352,6 +352,56 @@ Verified examples:
 - Asset catalog assignment: `node_tree.asset_data.catalog_id`
 - Default group-node width: `node_tree.default_group_node_width`
 
+## Interface menus backed by FLOAT Menu Switch
+
+- Node identifier: `GeometryNodeMenuSwitch`.
+- A menu definition copied with `NodeTreeInterfaceSocket.from_socket()` from a
+  Menu Switch using `data_type = "FLOAT"` produced an empty interface enum and
+  a blank default in the tested Blender 5.2 runtime.
+- Copying the same item names from a temporary Menu Switch using
+  `data_type = "GEOMETRY"` preserved the interface enum and its `Amplitude`
+  default. The temporary node can be removed immediately after `from_socket()`.
+- That interface menu links successfully to the `Menu` input of a functional
+  FLOAT Menu Switch with the same ordered items. DH Audio Mesh Deform and Mesh
+  Extrude use this pattern for their stereo-aware Audio Source menu.
+
+## Face extrusion and attribute propagation
+
+- Node identifier: `GeometryNodeExtrudeMesh`.
+- Faces mode is the RNA property `mode = "FACES"`.
+- Relevant inputs are `Mesh`, `Selection`, `Offset`, `Offset Scale`, and
+  `Individual`; outputs are `Mesh`, `Top`, and `Side`.
+- In the tested runtime, wiring both Offset and Offset Scale does not provide a
+  safe dynamically switchable mode: the linked vector Offset path wins even
+  when Individual is true. Use separate Extrude Mesh branches when a public
+  control must choose vector/region versus scalar-normal/individual behavior.
+- With Individual true, leave Offset unlinked and drive Offset Scale to extrude
+  each face along its normal. With Individual false, leave Offset Scale
+  unlinked and drive Offset to extrude the connected selected region.
+- Float and integer attributes stored on the source `FACE` domain before
+  extrusion propagated to every generated top and side face. This is the
+  material transport pattern used by DH Audio Mesh Extrude.
+- Top and Side are anonymous Boolean fields. They remain usable after selecting
+  the matching geometry branch with corresponding Boolean Switch nodes.
+
+## Face-domain storage and top scaling
+
+- `GeometryNodeStoreNamedAttribute.domain = "FACE"` is supported and uses the
+  same `Geometry`, `Selection`, `Name`, and `Value` sockets as point/instance
+  storage.
+- `GeometryNodeScaleElements` supports `domain = "FACE"`; verified inputs are
+  `Geometry`, `Selection`, `Scale`, `Center`, the menu socket `Scale Mode`, and
+  `Axis`.
+- The `Scale Mode` menu default used by the toolkit is `Uniform`.
+
+## Shader coordinate transforms
+
+- `ShaderNodeVectorRotate` supports `rotation_type = "AXIS_ANGLE"`.
+- Verified inputs include `Vector`, `Center`, `Axis`, and `Angle`; the generated
+  UV helper fixes Axis to `(0, 0, 1)` and performs pivot translation explicitly.
+- `ShaderNodeVectorMath` operations `SUBTRACT`, component-wise `MULTIPLY`,
+  `SCALE`, and `ADD` compose predictable pivot scale, rotation, and offset.
+
 ## Baseline observations
 
 - Scene Time, custom Time, Time Offset, All Channels, and individual stereo

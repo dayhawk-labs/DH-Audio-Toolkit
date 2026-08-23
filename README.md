@@ -1,6 +1,12 @@
-DH AUDIO TOOLKIT 3.10.0
+DH AUDIO TOOLKIT 3.11.0-beta.1
 
 Blender 5.2+
+
+Peer beta: the public group names and standardized `dh_audio_*` attributes are
+compatibility-sensitive. Newly introduced beta controls may still be refined
+from testing feedback before a stable release. Start with
+[`docs/BETA_QUICKSTART.md`](docs/BETA_QUICKSTART.md) and see
+[`docs/RELEASE_NOTES_3.11.0-beta.1.md`](docs/RELEASE_NOTES_3.11.0-beta.1.md).
 
 
 
@@ -183,6 +189,24 @@ DH Audio Spectrum Bridge
 &#x20;   exposed directly for extrusion, displacement, scaling, and rotation.
 
 
+DH Audio Mesh Deform
+
+&#x20;   Displaces arbitrary mesh or curve points using a reusable mono/stereo
+
+&#x20;   spectrum. Band and Selection are fields, and Audio Source can use standard
+
+&#x20;   amplitude or paired Left/Right values.
+
+
+DH Audio Mesh Extrude
+
+&#x20;   Extrudes mesh faces from reusable spectrum data. Normal mode creates
+
+&#x20;   independent face-normal height; Direction mode moves the connected region.
+
+&#x20;   Standard audio attributes propagate to generated top and side faces.
+
+
 
 DH Audio Sample Range
 
@@ -259,6 +283,15 @@ DH Audio Shader Map
 &#x20;   a final output range. Use it for amplitude, named bands, UV controls, and
 
 &#x20;   Spectrum History fades.
+
+
+DH Audio Shader UV Transform
+
+&#x20;   Applies factor-driven offset, pivot scale, and Z rotation to shader
+
+&#x20;   coordinates. It accepts Material Reader, Shader Map, named-band, or history
+
+&#x20;   values and exposes the effective controls as outputs.
 
 
 

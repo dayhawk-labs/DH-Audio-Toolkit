@@ -30,7 +30,7 @@ import wave
 import bpy
 
 
-TOOLKIT_VERSION = "3.10.0"
+TOOLKIT_VERSION = "3.11.0-beta.1"
 
 PUBLIC_GROUPS = {
     "DH Audio Analyzer": ("GeometryNodeTree", 330, "75e799e2-55ce-553a-8fdf-a74c5cf0de2c"),
@@ -42,6 +42,8 @@ PUBLIC_GROUPS = {
     "DH Audio Band Query": ("GeometryNodeTree", 285, "9b46dff4-fa9d-510f-b0ae-a8af6da87e3a"),
     "DH Audio Spectrum Sample": ("GeometryNodeTree", 310, "9b46dff4-fa9d-510f-b0ae-a8af6da87e3a"),
     "DH Audio Spectrum Bridge": ("GeometryNodeTree", 340, "a4faf3f4-5a13-5f83-ae97-28993f20ac20"),
+    "DH Audio Mesh Deform": ("GeometryNodeTree", 340, "a4faf3f4-5a13-5f83-ae97-28993f20ac20"),
+    "DH Audio Mesh Extrude": ("GeometryNodeTree", 350, "a4faf3f4-5a13-5f83-ae97-28993f20ac20"),
     "DH Audio Response": ("GeometryNodeTree", 285, "a4faf3f4-5a13-5f83-ae97-28993f20ac20"),
     "DH Audio Temporal Response": ("GeometryNodeTree", 310, "75e799e2-55ce-553a-8fdf-a74c5cf0de2c"),
     "DH Audio Spectrum History": ("GeometryNodeTree", 310, "de47b34b-1184-5bc8-84ac-3c5ada05f601"),
@@ -55,12 +57,14 @@ PUBLIC_GROUPS = {
     "DH Audio Material Reader": ("ShaderNodeTree", 300, "1a181044-5483-5a07-ad44-2025bf0459e4"),
     "DH Audio Shader Response": ("ShaderNodeTree", 285, "1a181044-5483-5a07-ad44-2025bf0459e4"),
     "DH Audio Shader Map": ("ShaderNodeTree", 300, "1a181044-5483-5a07-ad44-2025bf0459e4"),
+    "DH Audio Shader UV Transform": ("ShaderNodeTree", 320, "1a181044-5483-5a07-ad44-2025bf0459e4"),
 }
 
 INTERNAL_GROUPS = {
     "DH Internal - Store Spectrum Attributes",
     "DH Internal - Store Stereo Attributes",
     "DH Internal - Store Spectrum Bridge Attributes",
+    "DH Internal - Store Spectrum Face Attributes",
     "DH Internal - Named Band Map",
     "DH Internal - Store Named Band Metadata",
     "DH Internal - Store Named Bands",
@@ -188,8 +192,28 @@ EXPECTED_PANELS = {
         "Stereo Values": False,
         "Frequency Metadata": True,
     },
+    "DH Audio Mesh Deform": {
+        "Geometry & Spectrum": False,
+        "Band Mapping": False,
+        "Deformation": False,
+        "Attribute Storage": True,
+        "Outputs": False,
+    },
+    "DH Audio Mesh Extrude": {
+        "Mesh & Spectrum": False,
+        "Band Mapping": False,
+        "Extrusion": False,
+        "Outputs": False,
+    },
     "DH Audio Shader Map": {
         "Mapping": False,
+    },
+    "DH Audio Shader UV Transform": {
+        "Coordinates": False,
+        "Offset": False,
+        "Scale": True,
+        "Rotation": True,
+        "Outputs": False,
     },
 }
 
@@ -427,6 +451,54 @@ def _store_attribute(tree, geometry_socket, value_socket, name, data_type="FLOAT
     return store
 
 
+def _synthetic_spectrum_source(tree):
+    """Four bands with predictable mono/stereo fields for consumer tests."""
+    source = tree.nodes.new("GeometryNodeMeshLine")
+    source.mode = "OFFSET"
+    _set_input(source, "Count", 4)
+    index = tree.nodes.new("GeometryNodeInputIndex")
+
+    quarter = tree.nodes.new("ShaderNodeMath")
+    quarter.operation = "MULTIPLY"
+    _set_input(quarter, 1, 0.25)
+    amplitude = tree.nodes.new("ShaderNodeMath")
+    amplitude.operation = "ADD"
+    _set_input(amplitude, 1, 0.25)
+    left = tree.nodes.new("ShaderNodeMath")
+    left.operation = "ADD"
+    _set_input(left, 1, 1.0)
+    right_scale = tree.nodes.new("ShaderNodeMath")
+    right_scale.operation = "MULTIPLY"
+    _set_input(right_scale, 1, 10.0)
+    right = tree.nodes.new("ShaderNodeMath")
+    right.operation = "ADD"
+    _set_input(right, 1, 10.0)
+
+    tree.links.new(_socket(index.outputs, "Index"), _socket(quarter.inputs, 0))
+    tree.links.new(_socket(quarter.outputs, "Value"), _socket(amplitude.inputs, 0))
+    tree.links.new(_socket(index.outputs, "Index"), _socket(left.inputs, 0))
+    tree.links.new(_socket(index.outputs, "Index"), _socket(right_scale.inputs, 0))
+    tree.links.new(_socket(right_scale.outputs, "Value"), _socket(right.inputs, 0))
+
+    current = _store_attribute(
+        tree, _socket(source.outputs, "Mesh"), _socket(amplitude.outputs, "Value"),
+        "dh_audio_amp",
+    )
+    current = _store_attribute(
+        tree, _socket(current.outputs, "Geometry"), _socket(index.outputs, "Index"),
+        "dh_audio_band_index", "INT",
+    )
+    current = _store_attribute(
+        tree, _socket(current.outputs, "Geometry"), _socket(left.outputs, "Value"),
+        "dh_audio_left_amp",
+    )
+    current = _store_attribute(
+        tree, _socket(current.outputs, "Geometry"), _socket(right.outputs, "Value"),
+        "dh_audio_right_amp",
+    )
+    return _socket(current.outputs, "Geometry")
+
+
 def _new_host(name, node_tree, vertices=None, edges=None, faces=None):
     mesh = bpy.data.meshes.new(name + " Mesh")
     mesh.from_pydata(vertices or [(0.0, 0.0, 0.0)], edges or [], faces or [])
@@ -512,7 +584,7 @@ def _audit_interface(report):
         )
 
     asset_names = {tree.name for tree in bpy.data.node_groups if tree.asset_data}
-    report.check("Exactly 22 public assets", asset_names == set(PUBLIC_GROUPS), sorted(asset_names))
+    report.check("Exactly 25 public assets", asset_names == set(PUBLIC_GROUPS), sorted(asset_names))
 
     for name, (tree_type, width, catalog) in PUBLIC_GROUPS.items():
         tree = bpy.data.node_groups[name]
@@ -559,6 +631,20 @@ def _audit_interface(report):
         ("DH Audio Spectrum Bridge", "Selection"): True,
         ("DH Audio Spectrum Bridge", "Store on Points"): True,
         ("DH Audio Spectrum Bridge", "Store on Instances"): True,
+        ("DH Audio Mesh Deform", "Audio Source"): "Amplitude",
+        ("DH Audio Mesh Deform", "Use Normals"): True,
+        ("DH Audio Mesh Deform", "Direction"): [0.0, 0.0, 1.0],
+        ("DH Audio Mesh Deform", "Strength"): 1.0,
+        ("DH Audio Mesh Deform", "Center"): 0.0,
+        ("DH Audio Mesh Deform", "Store on Points"): True,
+        ("DH Audio Mesh Deform", "Store on Instances"): False,
+        ("DH Audio Mesh Extrude", "Audio Source"): "Amplitude",
+        ("DH Audio Mesh Extrude", "Use Normals"): True,
+        ("DH Audio Mesh Extrude", "Direction"): [0.0, 0.0, 1.0],
+        ("DH Audio Mesh Extrude", "Strength"): 1.0,
+        ("DH Audio Mesh Extrude", "Center"): 0.0,
+        ("DH Audio Mesh Extrude", "Base Top Scale"): 1.0,
+        ("DH Audio Mesh Extrude", "Audio Top Scale"): 0.0,
         ("DH Audio Spectrum Bars", "Bar Profile"): "Box",
         ("DH Audio Spectrum Curve", "Curve Style"): "Smooth",
         ("DH Audio Response", "Gain"): 1.0,
@@ -595,6 +681,14 @@ def _audit_interface(report):
         ("DH Audio Shader Map", "Invert"): False,
         ("DH Audio Shader Map", "Clamp"): True,
         ("DH Audio Shader Map", "Curve"): 1.0,
+        ("DH Audio Shader UV Transform", "Factor"): 0.0,
+        ("DH Audio Shader UV Transform", "Pivot"): [0.5, 0.5, 0.0],
+        ("DH Audio Shader UV Transform", "Base Offset"): [0.0, 0.0, 0.0],
+        ("DH Audio Shader UV Transform", "Audio Offset"): [0.1, 0.0, 0.0],
+        ("DH Audio Shader UV Transform", "Base Scale"): [1.0, 1.0, 1.0],
+        ("DH Audio Shader UV Transform", "Audio Scale"): [0.0, 0.0, 0.0],
+        ("DH Audio Shader UV Transform", "Base Rotation"): 0.0,
+        ("DH Audio Shader UV Transform", "Audio Rotation"): 0.0,
     }
     for (group_name, socket_name), expected in defaults.items():
         item = _interface_socket(bpy.data.node_groups[group_name], socket_name)
@@ -658,6 +752,35 @@ def _audit_interface(report):
         },
     )
 
+    for group_name, geometry_name in (
+        ("DH Audio Mesh Deform", "Geometry"),
+        ("DH Audio Mesh Extrude", "Mesh"),
+    ):
+        effect = bpy.data.node_groups[group_name]
+        band = _interface_socket(effect, "Band", "INPUT")
+        selection = _interface_socket(effect, "Selection", "INPUT")
+        geometry_output = _interface_socket(effect, geometry_name, "OUTPUT")
+        field_outputs = [
+            item for item in effect.interface.items_tree
+            if item.item_type == "SOCKET"
+            and item.in_out == "OUTPUT"
+            and item.name != geometry_name
+        ]
+        report.check(
+            f"{group_name}: mapping inputs and diagnostic outputs use fields",
+            band.structure_type == "FIELD"
+            and selection.structure_type == "FIELD"
+            and geometry_output.structure_type == "SINGLE"
+            and field_outputs
+            and all(item.structure_type == "FIELD" for item in field_outputs),
+            {
+                "Band": band.structure_type,
+                "Selection": selection.structure_type,
+                "Geometry": geometry_output.structure_type,
+                "outputs": {item.name: item.structure_type for item in field_outputs},
+            },
+        )
+
     boolean_inputs = {
         ("DH Audio Analyzer", "Use Scene Time"),
         ("DH Audio Analyzer", "All Channels"),
@@ -671,6 +794,12 @@ def _audit_interface(report):
         ("DH Audio Spectrum Bridge", "Selection"),
         ("DH Audio Spectrum Bridge", "Store on Points"),
         ("DH Audio Spectrum Bridge", "Store on Instances"),
+        ("DH Audio Mesh Deform", "Selection"),
+        ("DH Audio Mesh Deform", "Use Normals"),
+        ("DH Audio Mesh Deform", "Store on Points"),
+        ("DH Audio Mesh Deform", "Store on Instances"),
+        ("DH Audio Mesh Extrude", "Selection"),
+        ("DH Audio Mesh Extrude", "Use Normals"),
         ("DH Audio Spectrum Instances", "Realize Instances"),
         ("DH Audio Material Reader", "Use Instancer"),
         ("DH Audio Shader Response", "Clamp to 1"),
@@ -768,6 +897,96 @@ def _test_shader_map(report):
             abs(actual_value - expected_value) < 1e-6 and abs(actual_factor - expected_factor) < 1e-6,
             {"value": actual_value, "factor": actual_factor},
         )
+
+
+def _evaluate_shader_value_input(socket, group_values):
+    if socket.is_linked:
+        return _evaluate_shader_value_output(socket.links[0].from_socket, group_values)
+    value = socket.default_value
+    if hasattr(value, "__len__") and not isinstance(value, (str, bytes)):
+        return tuple(float(component) for component in value)
+    return float(value)
+
+
+def _evaluate_shader_value_output(socket, group_values):
+    node = socket.node
+    if node.type == "GROUP_INPUT":
+        return group_values[socket.name]
+    if node.bl_idname == "ShaderNodeMath":
+        values = [_evaluate_shader_value_input(item, group_values) for item in node.inputs]
+        a, b = values[0], values[1]
+        if node.operation == "ADD":
+            return a + b
+        if node.operation == "MULTIPLY":
+            return a * b
+        raise ValueError(f"Unsupported UV test math operation: {node.operation}")
+    if node.bl_idname == "ShaderNodeVectorMath":
+        a = _evaluate_shader_value_input(node.inputs[0], group_values)
+        b = _evaluate_shader_value_input(node.inputs[1], group_values)
+        if node.operation == "ADD":
+            return tuple(x + y for x, y in zip(a, b))
+        if node.operation == "SUBTRACT":
+            return tuple(x - y for x, y in zip(a, b))
+        if node.operation == "MULTIPLY":
+            return tuple(x * y for x, y in zip(a, b))
+        if node.operation == "SCALE":
+            scale = _evaluate_shader_value_input(node.inputs[3], group_values)
+            return tuple(x * scale for x in a)
+        raise ValueError(f"Unsupported UV test vector operation: {node.operation}")
+    if node.bl_idname == "ShaderNodeVectorRotate":
+        vector = _evaluate_shader_value_input(_socket(node.inputs, "Vector"), group_values)
+        center = _evaluate_shader_value_input(_socket(node.inputs, "Center"), group_values)
+        axis = _evaluate_shader_value_input(_socket(node.inputs, "Axis"), group_values)
+        angle = _evaluate_shader_value_input(_socket(node.inputs, "Angle"), group_values)
+        if node.rotation_type != "AXIS_ANGLE" or any(
+            abs(actual - expected) > 1e-6 for actual, expected in zip(axis, (0.0, 0.0, 1.0))
+        ):
+            raise ValueError("UV test evaluator supports the generated Z axis-angle rotation")
+        x, y, z = (vector[i] - center[i] for i in range(3))
+        cosine, sine = math.cos(angle), math.sin(angle)
+        return (
+            x * cosine - y * sine + center[0],
+            x * sine + y * cosine + center[1],
+            z + center[2],
+        )
+    raise TypeError(f"Unsupported UV test node: {node.bl_idname}")
+
+
+def _test_shader_uv_transform(report):
+    tree = bpy.data.node_groups["DH Audio Shader UV Transform"]
+    output = next(node for node in tree.nodes if node.type == "GROUP_OUTPUT" and node.is_active_output)
+    values = {
+        "Vector": (1.0, 0.5, 0.0),
+        "Factor": 2.0,
+        "Pivot": (0.5, 0.5, 0.0),
+        "Base Offset": (0.1, 0.2, 0.0),
+        "Audio Offset": (0.05, 0.0, 0.0),
+        "Base Scale": (1.0, 1.0, 1.0),
+        "Audio Scale": (0.5, 0.0, 0.0),
+        "Base Rotation": 0.0,
+        "Audio Rotation": math.pi / 4.0,
+    }
+    actual = {
+        name: _evaluate_shader_value_input(_socket(output.inputs, name), values)
+        for name in ("Vector", "Offset", "Scale", "Rotation")
+    }
+    expected = {
+        "Vector": (0.7, 1.7, 0.0),
+        "Offset": (0.2, 0.2, 0.0),
+        "Scale": (2.0, 1.0, 1.0),
+        "Rotation": math.pi / 2.0,
+    }
+
+    def close(first, second):
+        if isinstance(second, tuple):
+            return all(abs(a - b) < 1e-6 for a, b in zip(first, second))
+        return abs(first - second) < 1e-6
+
+    report.check(
+        "Shader UV Transform offset, pivot scale, and rotation",
+        all(close(actual[name], expected[name]) for name in expected),
+        actual,
+    )
 
 
 def _test_analyzer(report, sound):
@@ -1906,6 +2125,125 @@ def _test_spectrum_bridge(report):
     )
 
 
+def _test_mesh_consumers(report):
+    # Arbitrary point geometry: left-channel values drive a selected Z offset.
+    deform_tree, _deform_in, deform_out = _new_geometry_tree("DH Test Mesh Deform")
+    deform_source = _synthetic_spectrum_source(deform_tree)
+    target = deform_tree.nodes.new("GeometryNodeMeshLine")
+    target.mode = "OFFSET"
+    _set_input(target, "Count", 6)
+    _set_input(target, "Offset", (1.0, 0.0, 0.0))
+    index = deform_tree.nodes.new("GeometryNodeInputIndex")
+    modulo = deform_tree.nodes.new("FunctionNodeIntegerMath")
+    modulo.operation = "MODULO"
+    _set_input(modulo, 1, 4)
+    selected = deform_tree.nodes.new("FunctionNodeCompare")
+    selected.data_type = "INT"
+    selected.operation = "LESS_THAN"
+    _set_input(selected, "B", 5)
+    deform_tree.links.new(_socket(index.outputs, "Index"), _socket(modulo.inputs, 0))
+    deform_tree.links.new(_socket(index.outputs, "Index"), _socket(selected.inputs, "A"))
+
+    deform = _group_node(deform_tree, "DH Audio Mesh Deform")
+    _set_input(deform, "Audio Source", "Left Amplitude")
+    _set_input(deform, "Use Normals", False)
+    _set_input(deform, "Direction", (0.0, 0.0, 1.0))
+    _set_input(deform, "Strength", 0.5)
+    _set_input(deform, "Center", 1.0)
+    _set_input(deform, "Store on Points", True)
+    _set_input(deform, "Store on Instances", False)
+    deform_tree.links.new(_socket(target.outputs, "Mesh"), _socket(deform.inputs, "Geometry"))
+    deform_tree.links.new(deform_source, _socket(deform.inputs, "Spectrum"))
+    deform_tree.links.new(_socket(modulo.outputs, "Value"), _socket(deform.inputs, "Band"))
+    deform_tree.links.new(_socket(selected.outputs, "Result"), _socket(deform.inputs, "Selection"))
+    deform_tree.links.new(_socket(deform.outputs, "Geometry"), _socket(deform_out.inputs, "Geometry"))
+
+    deform_snapshot = _snapshot(_new_host("DH Test Mesh Deform Host", deform_tree))
+    z_values = [round(vertex[2], 5) for vertex in deform_snapshot["vertices"]]
+    report.check(
+        "Mesh Deform maps stereo audio per point and respects Selection",
+        z_values == [0.0, 0.5, 1.0, 1.5, 0.0, 0.0]
+        and deform_snapshot["attributes"].get("dh_audio_left_amp") == [1.0, 2.0, 3.0, 4.0, 1.0, 0.0],
+        {"z": z_values, "left": deform_snapshot["attributes"].get("dh_audio_left_amp")},
+    )
+
+    # Two face bands: normal extrusion, propagated attributes, anonymous fields,
+    # then the alternate connected-region direction path.
+    extrude_tree, _extrude_in, extrude_out = _new_geometry_tree("DH Test Mesh Extrude")
+    extrude_source = _synthetic_spectrum_source(extrude_tree)
+    grid = extrude_tree.nodes.new("GeometryNodeMeshGrid")
+    _set_input(grid, "Vertices X", 3)
+    _set_input(grid, "Vertices Y", 2)
+    _set_input(grid, "Size X", 3.0)
+    _set_input(grid, "Size Y", 1.0)
+    face_index = extrude_tree.nodes.new("GeometryNodeInputIndex")
+    extrude = _group_node(extrude_tree, "DH Audio Mesh Extrude")
+    _set_input(extrude, "Use Normals", True)
+    _set_input(extrude, "Strength", 2.0)
+    extrude_tree.links.new(_socket(grid.outputs, "Mesh"), _socket(extrude.inputs, "Mesh"))
+    extrude_tree.links.new(extrude_source, _socket(extrude.inputs, "Spectrum"))
+    extrude_tree.links.new(_socket(face_index.outputs, "Index"), _socket(extrude.inputs, "Band"))
+
+    current_geometry = _socket(extrude.outputs, "Mesh")
+    for attr_name, output_name, data_type in (
+        ("dh_test_extrude_top", "Top", "BOOLEAN"),
+        ("dh_test_extrude_side", "Side", "BOOLEAN"),
+        ("dh_test_extrude_displacement", "Displacement", "FLOAT"),
+    ):
+        store = extrude_tree.nodes.new("GeometryNodeStoreNamedAttribute")
+        store.domain = "FACE"
+        store.data_type = data_type
+        _set_input(store, "Name", attr_name)
+        extrude_tree.links.new(current_geometry, _socket(store.inputs, "Geometry"))
+        extrude_tree.links.new(_socket(extrude.outputs, output_name), _socket(store.inputs, "Value"))
+        current_geometry = _socket(store.outputs, "Geometry")
+    extrude_tree.links.new(current_geometry, _socket(extrude_out.inputs, "Geometry"))
+
+    extrude_obj = _new_host("DH Test Mesh Extrude Host", extrude_tree)
+    normal_snapshot = _snapshot(extrude_obj)
+    normal_z = [vertex[2] for vertex in normal_snapshot["vertices"]]
+    top = normal_snapshot["attributes"].get("dh_test_extrude_top", [])
+    side = normal_snapshot["attributes"].get("dh_test_extrude_side", [])
+    face_amp = normal_snapshot["attributes"].get("dh_audio_amp", [])
+    report.check(
+        "Mesh Extrude normal mode creates audio-height faces",
+        len(normal_snapshot["vertices"]) == 14
+        and normal_snapshot["faces"] == 10
+        and abs(max(normal_z) - 1.0) < 1e-5
+        and sum(bool(value) for value in top) == 2
+        and sum(bool(value) for value in side) == 8,
+        {"vertices": len(normal_snapshot["vertices"]), "faces": normal_snapshot["faces"], "z_max": max(normal_z), "top": top, "side": side},
+    )
+    report.check(
+        "Mesh Extrude propagates face-domain spectrum attributes",
+        len(face_amp) == 10 and abs(min(face_amp) - 0.25) < 1e-5 and abs(max(face_amp) - 0.5) < 1e-5,
+        face_amp,
+    )
+
+    _set_input(extrude, "Use Normals", False)
+    _set_input(extrude, "Direction", (0.0, 1.0, 0.0))
+    direction_snapshot = _snapshot(extrude_obj)
+    direction_z = [vertex[2] for vertex in direction_snapshot["vertices"]]
+    direction_y = [vertex[1] for vertex in direction_snapshot["vertices"]]
+    report.check(
+        "Mesh Extrude direction mode offsets the selected region",
+        direction_snapshot["faces"] == 8
+        and max(abs(value) for value in direction_z) < 1e-5
+        and max(direction_y) > 1.4,
+        {"faces": direction_snapshot["faces"], "z_max": max(direction_z), "y_max": max(direction_y)},
+    )
+
+    face_helper = bpy.data.node_groups["DH Internal - Store Spectrum Face Attributes"]
+    writers = [node for node in face_helper.nodes if node.bl_idname == "GeometryNodeStoreNamedAttribute"]
+    report.check(
+        "Face transport writes the full mono/stereo schema on selected faces",
+        len(writers) == len(SPECTRUM_ATTRIBUTES) + len(STEREO_ATTRIBUTES)
+        and all(node.domain == "FACE" for node in writers)
+        and all(_socket(node.inputs, "Selection").is_linked for node in writers),
+        {"count": len(writers), "domains": sorted({node.domain for node in writers})},
+    )
+
+
 def _analyzer_points_chain(tree, sound):
     analyzer = _group_node(tree, "DH Audio Analyzer")
     _set_input(analyzer, "Sound", sound)
@@ -2110,12 +2448,13 @@ def run_validation(repo_root=None, release_path=None, report_path=None):
 
         report.check("Repeated build structural signature", first_signature == second_signature, {"first": first_signature, "second": second_signature})
         report.check("Repeated build catalog bytes", first_catalog == second_catalog, hashlib.sha256(second_catalog).hexdigest())
-        report.check("Exactly 28 generated groups", len([tree for tree in bpy.data.node_groups if tree.name in PUBLIC_GROUPS or tree.name in INTERNAL_GROUPS]) == 28, len(bpy.data.node_groups))
+        report.check("Exactly 32 generated groups", len([tree for tree in bpy.data.node_groups if tree.name in PUBLIC_GROUPS or tree.name in INTERNAL_GROUPS]) == 32, len(bpy.data.node_groups))
         handler_count = sum(1 for handler in bpy.app.handlers.save_post if getattr(handler, "__name__", "") == "_dh_audio_write_catalogs_on_save")
         report.check("Exactly one toolkit save handler", handler_count == 1, handler_count)
 
         report.section("Interface audit completed", lambda: _audit_interface(report))
         report.section("Shader Map tests completed", lambda: _test_shader_map(report))
+        report.section("Shader UV Transform tests completed", lambda: _test_shader_uv_transform(report))
 
         _write_test_wav(test_wav)
         sound = bpy.data.sounds.load(str(test_wav), check_existing=False)
@@ -2131,6 +2470,7 @@ def run_validation(repo_root=None, release_path=None, report_path=None):
         report.section("Sample Range and Band Query tests completed", lambda: _test_sample_range_and_query(report, sound))
         report.section("Spectrum Sample tests completed", lambda: _test_spectrum_sample(report))
         report.section("Spectrum Bridge tests completed", lambda: _test_spectrum_bridge(report))
+        report.section("Mesh consumer tests completed", lambda: _test_mesh_consumers(report))
         report.section("Visualizer tests completed", lambda: _test_visualizers(report, sound))
         report.section("Synthetic fill and curve tests completed", lambda: _test_synthetic_fill_and_curve(report))
         _remove_test_data()
@@ -2139,8 +2479,8 @@ def run_validation(repo_root=None, release_path=None, report_path=None):
         release = _clean_release(repo_root, release_path)
         report.observations["release"] = release
         report.check("Release contains no scene objects", release["objects"] == 0, release)
-        report.check("Release contains 28 generated groups", release["node_groups"] == 28, release)
-        report.check("Release contains 22 public assets", release["assets"] == 22, release)
+        report.check("Release contains 32 generated groups", release["node_groups"] == 32, release)
+        report.check("Release contains 25 public assets", release["assets"] == 25, release)
         report.check("Internal groups are not assets", not release["internal_assets"], release["internal_assets"])
         report.check("Release catalog sidecar exists", Path(release["catalog_path"]).is_file(), release["catalog_path"])
         report.check("Release repeat-build is deterministic", release["repeat_build_deterministic"], release)
