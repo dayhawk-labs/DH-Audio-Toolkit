@@ -3,8 +3,14 @@ import re
 import os
 
 # =====================================================================
-# DH AUDIO TOOLKIT 3.9.0
+# DH AUDIO TOOLKIT 3.10.0
 # Blender 5.2+
+#
+# 3.10.0:
+# - Added DH Audio Spectrum Bridge for field-driven sampling onto arbitrary
+#   point and instance geometry without rebuilding the audio analysis graph.
+# - Standard spectrum and paired stereo attributes can be stored on either
+#   domain while the same sampled fields remain available as direct outputs.
 #
 # 3.9.0:
 # - Added DH Audio Spectrum Sample for field-driven, per-element band lookup.
@@ -81,6 +87,7 @@ import os
 #   - DH Audio Stereo Points
 #   - DH Audio Band Query
 #   - DH Audio Spectrum Sample
+#   - DH Audio Spectrum Bridge
 #   - DH Audio Sample Range
 #   - DH Audio Bands
 #   - DH Audio Spectrum Instances
@@ -136,7 +143,7 @@ import os
 # - Material Reader can switch between Geometry and Instancer lookup.
 # =====================================================================
 
-TOOLKIT_VERSION = "3.9.0"
+TOOLKIT_VERSION = "3.10.0"
 BLENDER_MIN_VERSION = (5, 2, 0)
 
 REBUILD_EXISTING = True
@@ -161,6 +168,7 @@ GROUP_POINTS = "DH Audio Spectrum Points"
 GROUP_STEREO_POINTS = "DH Audio Stereo Points"
 GROUP_QUERY = "DH Audio Band Query"
 GROUP_SPECTRUM_SAMPLE = "DH Audio Spectrum Sample"
+GROUP_SPECTRUM_BRIDGE = "DH Audio Spectrum Bridge"
 GROUP_RANGE = "DH Audio Sample Range"
 GROUP_BANDS = "DH Audio Bands"
 GROUP_INSTANCES = "DH Audio Spectrum Instances"
@@ -196,6 +204,7 @@ ASSET_CATALOG_PATHS = {
     GROUP_RADIAL: "Geometry Nodes/DH Audio/Mapping",
     GROUP_QUERY: "Geometry Nodes/DH Audio/Query",
     GROUP_SPECTRUM_SAMPLE: "Geometry Nodes/DH Audio/Query",
+    GROUP_SPECTRUM_BRIDGE: "Geometry Nodes/DH Audio/Utilities",
     GROUP_FREQ_SELECT: "Geometry Nodes/DH Audio/Query",
     GROUP_BARS: "Geometry Nodes/DH Audio/Visualizers",
     GROUP_CURVE: "Geometry Nodes/DH Audio/Visualizers",
@@ -222,6 +231,7 @@ PUBLIC_GROUP_WIDTHS = {
     GROUP_RADIAL: 315,
     GROUP_QUERY: 285,
     GROUP_SPECTRUM_SAMPLE: 310,
+    GROUP_SPECTRUM_BRIDGE: 340,
     GROUP_FREQ_SELECT: 280,
     GROUP_BARS: 350,
     GROUP_CURVE: 310,
@@ -239,6 +249,7 @@ PUBLIC_GROUP_WIDTHS = {
 # marked as assets. They keep the public groups compact when you Tab inside.
 INTERNAL_STORE_SPECTRUM = "DH Internal - Store Spectrum Attributes"
 INTERNAL_STORE_STEREO = "DH Internal - Store Stereo Attributes"
+INTERNAL_STORE_SPECTRUM_BRIDGE = "DH Internal - Store Spectrum Bridge Attributes"
 INTERNAL_NAMED_MAP = "DH Internal - Named Band Map"
 INTERNAL_STORE_NAMED_META = "DH Internal - Store Named Band Metadata"
 INTERNAL_STORE_NAMED = "DH Internal - Store Named Bands"
@@ -257,6 +268,7 @@ CANONICAL_GROUPS = [
     GROUP_RANGE,
     GROUP_QUERY,
     GROUP_SPECTRUM_SAMPLE,
+    GROUP_SPECTRUM_BRIDGE,
     GROUP_ANALYZER,
     GROUP_STEREO_ANALYZER,
     GROUP_FREQ_SELECT,
@@ -270,6 +282,7 @@ CANONICAL_GROUPS = [
     GROUP_SHADER_MAP,
     INTERNAL_STORE_SPECTRUM,
     INTERNAL_STORE_STEREO,
+    INTERNAL_STORE_SPECTRUM_BRIDGE,
     INTERNAL_NAMED_MAP,
     INTERNAL_STORE_NAMED_META,
     INTERNAL_STORE_NAMED,
@@ -2599,6 +2612,180 @@ def create_internal_store_stereo():
 
 
 # =====================================================================
+# Internal helper: Store sampled spectrum fields on points / instances
+# =====================================================================
+
+def create_internal_store_spectrum_bridge():
+    """Write the complete standard spectrum schema on two useful domains."""
+    tree = bpy.data.node_groups.new(
+        INTERNAL_STORE_SPECTRUM_BRIDGE,
+        "GeometryNodeTree",
+    )
+    tree["dh_role"] = "internal_store_spectrum_bridge"
+
+    controls_panel = tree.interface.new_panel(
+        name="Storage Controls",
+        default_closed=False,
+    )
+    primary_panel = tree.interface.new_panel(
+        name="Band Values",
+        default_closed=False,
+    )
+    stereo_panel = tree.interface.new_panel(
+        name="Stereo Values",
+        default_closed=True,
+    )
+    metadata_panel = tree.interface.new_panel(
+        name="Frequency Metadata",
+        default_closed=True,
+    )
+
+    new_socket(
+        tree, "Geometry", "INPUT", "NodeSocketGeometry",
+        parent=controls_panel,
+    )
+    new_socket(
+        tree, "Selection", "INPUT", "NodeSocketBool",
+        parent=controls_panel, default=True, structure_type="FIELD",
+    )
+    new_socket(
+        tree, "Store on Points", "INPUT", "NodeSocketBool",
+        parent=controls_panel, default=True, structure_type="SINGLE",
+    )
+    new_socket(
+        tree, "Store on Instances", "INPUT", "NodeSocketBool",
+        parent=controls_panel, default=True, structure_type="SINGLE",
+    )
+
+    attribute_specs = list(SPECTRUM_ATTRS) + list(STEREO_ATTRS)
+    for input_name, _attr_name, dtype in attribute_specs:
+        if (input_name, _attr_name, dtype) in STEREO_ATTRS:
+            panel = stereo_panel
+        elif input_name in {
+            "Low Frequency",
+            "Center Frequency",
+            "High Frequency",
+            "Bandwidth",
+        }:
+            panel = metadata_panel
+        else:
+            panel = primary_panel
+        socket_type = "NodeSocketInt" if dtype == "INT" else "NodeSocketFloat"
+        new_socket(
+            tree, input_name, "INPUT", socket_type,
+            parent=panel, default=0, structure_type="FIELD",
+        )
+    new_socket(tree, "Geometry", "OUTPUT", "NodeSocketGeometry")
+
+    nodes = tree.nodes
+    group_out = nodes.new("NodeGroupOutput")
+    group_out.location = (6000, 100)
+    group_out.is_active_output = True
+
+    frame_points = make_frame(
+        nodes, "FRAME_BRIDGE_POINTS", "POINT DOMAIN", (-1200, 700), 3100
+    )
+    frame_instances = make_frame(
+        nodes, "FRAME_BRIDGE_INSTANCES", "INSTANCE DOMAIN", (2100, 700), 3100
+    )
+
+    value_names = [name for name, _attr, _dtype in attribute_specs]
+    point_in = local_group_input(
+        nodes,
+        "Point Attribute Fields",
+        ["Geometry", "Selection", "Store on Points"] + value_names,
+        parent=frame_points,
+        location=(20, 260),
+        width=250,
+    )
+    instance_in = local_group_input(
+        nodes,
+        "Instance Attribute Fields",
+        ["Selection", "Store on Instances"] + value_names,
+        parent=frame_instances,
+        location=(20, 260),
+        width=250,
+    )
+
+    previous = point_in
+    previous_socket = "Geometry"
+    for index, (input_name, attr_name, dtype) in enumerate(attribute_specs):
+        row = index // 4
+        column = index % 4
+        layout_column = column if row % 2 == 0 else 3 - column
+        store = store_named_attribute_node(
+            nodes,
+            attr_name,
+            dtype,
+            "POINT",
+            parent=frame_points,
+            location=(600 + layout_column * 560, 400 - row * 260),
+            label=input_name,
+        )
+        link(tree, previous, previous_socket, store, "Geometry")
+        link(tree, point_in, "Selection", store, "Selection")
+        link(tree, point_in, input_name, store, "Value")
+        previous = store
+        previous_socket = "Geometry"
+
+    point_switch = switch_geometry_node(
+        nodes,
+        "Use Point Attributes",
+        (600, -1000),
+        frame_points,
+        "Bypass Point Writers When Disabled",
+    )
+    link(tree, point_in, "Store on Points", point_switch, "Switch")
+    link(tree, point_in, "Geometry", point_switch, "False")
+    link(tree, previous, previous_socket, point_switch, "True")
+
+    previous_instance = point_switch
+    previous_instance_socket = "Output"
+    for index, (input_name, attr_name, dtype) in enumerate(attribute_specs):
+        row = index // 4
+        column = index % 4
+        layout_column = column if row % 2 == 0 else 3 - column
+        store = store_named_attribute_node(
+            nodes,
+            attr_name,
+            dtype,
+            "INSTANCE",
+            parent=frame_instances,
+            location=(600 + layout_column * 560, 400 - row * 260),
+            label=input_name,
+        )
+        link(
+            tree,
+            previous_instance,
+            previous_instance_socket,
+            store,
+            "Geometry",
+        )
+        link(tree, instance_in, "Selection", store, "Selection")
+        link(tree, instance_in, input_name, store, "Value")
+        previous_instance = store
+        previous_instance_socket = "Geometry"
+
+    instance_switch = switch_geometry_node(
+        nodes,
+        "Use Instance Attributes",
+        (600, -1000),
+        frame_instances,
+        "Bypass Instance Writers When Disabled",
+    )
+    link(tree, instance_in, "Store on Instances", instance_switch, "Switch")
+    link(tree, point_switch, "Output", instance_switch, "False")
+    link(tree, previous_instance, previous_instance_socket, instance_switch, "True")
+
+    link(tree, instance_switch, "Output", group_out, "Geometry")
+    mark_internal(
+        tree,
+        "Internal point/instance writer for sampled standard and stereo spectrum attributes",
+    )
+    return tree
+
+
+# =====================================================================
 # Internal helper: Named band range map
 # =====================================================================
 
@@ -3786,6 +3973,243 @@ def create_spectrum_sample():
         tree,
         "Sample reusable spectrum and paired stereo attributes with a per-element "
         "band field for arbitrary deformation, array, instance, and attribute workflows."
+    )
+    return tree
+
+
+# =====================================================================
+# DH Audio Spectrum Bridge
+# =====================================================================
+
+def create_spectrum_bridge(spectrum_sample_group, store_bridge_group):
+    """Sample a reusable carrier and stamp its fields onto target geometry."""
+    tree = bpy.data.node_groups.new(GROUP_SPECTRUM_BRIDGE, "GeometryNodeTree")
+    tree["dh_role"] = "spectrum_attribute_bridge"
+
+    source_panel = tree.interface.new_panel(
+        name="Geometry & Spectrum",
+        description="Target geometry and reusable Analyzer-compatible carrier",
+        default_closed=False,
+    )
+    mapping_panel = tree.interface.new_panel(
+        name="Band Mapping",
+        description="Choose a spectrum band independently for each target element",
+        default_closed=False,
+    )
+    storage_panel = tree.interface.new_panel(
+        name="Attribute Storage",
+        description=(
+            "Store sampled values for geometry materials, instancer materials, "
+            "or both"
+        ),
+        default_closed=False,
+    )
+    result_panel = tree.interface.new_panel(
+        name="Result",
+        description="Target geometry carrying the selected audio attributes",
+        default_closed=False,
+    )
+    primary_panel = tree.interface.new_panel(
+        name="Band Values",
+        description="Common sampled values for direct geometry operations",
+        default_closed=False,
+    )
+    stereo_panel = tree.interface.new_panel(
+        name="Stereo Values",
+        description=(
+            "Paired values from DH Audio Stereo Analyzer; zero when the source "
+            "does not carry stereo attributes"
+        ),
+        default_closed=False,
+    )
+    metadata_panel = tree.interface.new_panel(
+        name="Frequency Metadata",
+        description="Detailed sampled frequency bounds",
+        default_closed=True,
+    )
+
+    new_socket(
+        tree,
+        "Geometry",
+        "INPUT",
+        "NodeSocketGeometry",
+        parent=source_panel,
+        description="Arbitrary target geometry or instances that should receive audio attributes",
+        structure_type="SINGLE",
+    )
+    new_socket(
+        tree,
+        "Spectrum",
+        "INPUT",
+        "NodeSocketGeometry",
+        parent=source_panel,
+        description=(
+            "Reusable carrier from DH Audio Analyzer, Stereo Analyzer, "
+            "Spectrum Bars, or another compatible source"
+        ),
+        structure_type="SINGLE",
+    )
+    new_socket(
+        tree,
+        "Band",
+        "INPUT",
+        "NodeSocketInt",
+        parent=mapping_panel,
+        default=0,
+        min_value=0,
+        max_value=511,
+        description=(
+            "Zero-based band field evaluated on each enabled storage domain. "
+            "Connect Index, ID, a face group, or another integer field"
+        ),
+        structure_type="FIELD",
+    )
+    new_socket(
+        tree,
+        "Selection",
+        "INPUT",
+        "NodeSocketBool",
+        parent=mapping_panel,
+        default=True,
+        description="Elements on the enabled domains that receive sampled attributes",
+        structure_type="FIELD",
+    )
+    new_socket(
+        tree,
+        "Store on Points",
+        "INPUT",
+        "NodeSocketBool",
+        parent=storage_panel,
+        default=True,
+        description=(
+            "Write standard attributes on mesh vertices or curve control points. "
+            "Recommended for realized geometry and normal material lookup"
+        ),
+        structure_type="SINGLE",
+    )
+    new_socket(
+        tree,
+        "Store on Instances",
+        "INPUT",
+        "NodeSocketBool",
+        parent=storage_panel,
+        default=True,
+        description=(
+            "Write standard attributes on the instance domain for Material Reader "
+            "with Use Instancer enabled"
+        ),
+        structure_type="SINGLE",
+    )
+
+    new_socket(
+        tree,
+        "Geometry",
+        "OUTPUT",
+        "NodeSocketGeometry",
+        parent=result_panel,
+        description="Target geometry with sampled spectrum attributes stored on enabled domains",
+        structure_type="SINGLE",
+    )
+
+    output_specs = []
+    frequency_names = {
+        "Low Frequency",
+        "Center Frequency",
+        "High Frequency",
+        "Bandwidth",
+    }
+    for output_name, attr_name, dtype in SPECTRUM_ATTRS:
+        panel = metadata_panel if output_name in frequency_names else primary_panel
+        if dtype == "INT":
+            socket_type = "NodeSocketInt"
+        elif output_name in frequency_names:
+            socket_type = "NodeSocketFloatFrequency"
+        else:
+            socket_type = "NodeSocketFloat"
+        new_socket(
+            tree,
+            output_name,
+            "OUTPUT",
+            socket_type,
+            parent=panel,
+            description=f"Sampled '{attr_name}' field for direct downstream use",
+            structure_type="FIELD",
+        )
+        output_specs.append((output_name, attr_name, dtype))
+
+    for output_name, attr_name, dtype in STEREO_ATTRS:
+        socket_type = "NodeSocketInt" if dtype == "INT" else "NodeSocketFloat"
+        new_socket(
+            tree,
+            output_name,
+            "OUTPUT",
+            socket_type,
+            parent=stereo_panel,
+            description=f"Sampled paired stereo field '{attr_name}'",
+            structure_type="FIELD",
+        )
+        output_specs.append((output_name, attr_name, dtype))
+
+    nodes = tree.nodes
+    # This public tree is intentionally a compact unframed five-node pipeline.
+    # A single large wrapper frame makes Blender's default View All zoom much
+    # farther out than the actual nodes and hurts readability on high-DPI UIs.
+    frame = None
+
+    target_in = local_group_input(
+        nodes,
+        "Target Geometry",
+        ["Geometry", "Selection", "Store on Points", "Store on Instances"],
+        parent=frame,
+        location=(20, 120),
+        width=240,
+    )
+    mapping_in = local_group_input(
+        nodes,
+        "Spectrum + Band Field",
+        ["Spectrum", "Band"],
+        parent=frame,
+        location=(20, 520),
+        width=240,
+    )
+
+    sample = nodes.new("GeometryNodeGroup")
+    sample.name = "Sample Spectrum Fields"
+    sample.label = "Sample Spectrum Fields"
+    sample.node_tree = spectrum_sample_group
+    sample.parent = frame
+    sample.location = (340, 500)
+    sample.width = 320
+    link(tree, mapping_in, "Spectrum", sample, "Spectrum")
+    link(tree, mapping_in, "Band", sample, "Band")
+
+    store = nodes.new("GeometryNodeGroup")
+    store.name = "Store Sampled Attributes"
+    store.label = "Point + Instance Attribute Bridge"
+    store.node_tree = store_bridge_group
+    store.parent = frame
+    store.location = (760, 140)
+    store.width = 350
+    link(tree, target_in, "Geometry", store, "Geometry")
+    link(tree, target_in, "Selection", store, "Selection")
+    link(tree, target_in, "Store on Points", store, "Store on Points")
+    link(tree, target_in, "Store on Instances", store, "Store on Instances")
+
+    group_out = nodes.new("NodeGroupOutput")
+    group_out.location = (1320, 380)
+    group_out.width = 320
+    group_out.parent = frame
+    group_out.is_active_output = True
+    link(tree, store, "Geometry", group_out, "Geometry")
+
+    for output_name, _attr_name, _dtype in output_specs:
+        link(tree, sample, output_name, store, output_name)
+        link(tree, sample, output_name, group_out, output_name)
+
+    mark_asset(
+        tree,
+        "Map reusable spectrum bands across arbitrary geometry or instances, "
+        "store the standard material attributes, and expose the sampled fields directly.",
     )
     return tree
 
@@ -6384,6 +6808,12 @@ DH Audio Spectrum Sample
     extrusion, displacement, arrays, instances, or stored shader controls.
     Paired left/right fields are available for Stereo Analyzer carriers.
 
+DH Audio Spectrum Bridge
+    Applies Spectrum Sample to arbitrary target geometry and writes the full
+    standard spectrum and stereo schemas on points, instances, or both. Band
+    and Selection remain per-element fields, and all sampled values are also
+    exposed directly for extrusion, displacement, scaling, and rotation.
+
 DH Audio Sample Range
     Standalone direct sampler for one custom Low Hz -> High Hz range. Use it
     when you want one reaction value and do not need a complete spectrum.
@@ -6749,6 +7179,30 @@ data; it does not contain another Sample Sound Frequencies node.
 
 
 ======================================================================
+RECIPE 7B: MAP SPECTRUM BANDS ONTO ARBITRARY GEOMETRY
+======================================================================
+
+    DH Audio Analyzer [Spectrum]
+        -> DH Audio Spectrum Bridge [Spectrum]
+
+    Any mesh, curve, or instances [Geometry]
+        -> DH Audio Spectrum Bridge [Geometry]
+
+Connect an integer field such as Index modulo Analyzer Bands to Band. The
+Geometry output carries dh_audio_amp, dh_audio_norm, frequency metadata, and
+paired stereo attributes when the source is DH Audio Stereo Analyzer. The
+same values remain available as direct field outputs for Extrude Mesh, Set
+Position, Scale Instances, and other geometry operations.
+
+Store on Points supports real or realized geometry and Material Reader with
+Use Instancer off. Store on Instances supports un-realized instances and
+Material Reader with Use Instancer on. Both may be enabled, but Band and
+Selection evaluate independently in each domain. If Band uses Index on target
+instances, enable only Store on Instances unless prototype-point mapping is
+also intentional. Disable any domain that no downstream consumer needs.
+
+
+======================================================================
 RECIPE 8: SAMPLE ONE CUSTOM FREQUENCY RANGE
 ======================================================================
 
@@ -7043,6 +7497,7 @@ Start with one of these three paths:
 
     CUSTOM:
         Analyzer -> Spectrum Instances / Band Query / Spectrum Sample
+        Analyzer + arbitrary Geometry -> Spectrum Bridge
 """)
     return readme
 
@@ -7097,6 +7552,7 @@ def main():
     frequency_selection = create_frequency_selection()
     store_spectrum = create_internal_store_spectrum()
     store_stereo = create_internal_store_stereo()
+    store_spectrum_bridge = create_internal_store_spectrum_bridge()
     named_map = create_internal_named_band_map()
     named_meta_store = create_internal_store_named_metadata()
     named_store = create_internal_store_named_bands()
@@ -7110,6 +7566,10 @@ def main():
     radial_spectrum = create_radial_spectrum()
     query = create_band_query()
     spectrum_sample = create_spectrum_sample()
+    spectrum_bridge = create_spectrum_bridge(
+        spectrum_sample,
+        store_spectrum_bridge,
+    )
     sample_range = create_sample_range(response)
     named_bands = create_named_bands(named_map, named_meta_store, named_store)
 
@@ -7130,6 +7590,7 @@ def main():
         frequency_selection,
         store_spectrum,
         store_stereo,
+        store_spectrum_bridge,
         named_map,
         named_meta_store,
         named_store,
@@ -7140,6 +7601,7 @@ def main():
         radial_spectrum,
         query,
         spectrum_sample,
+        spectrum_bridge,
         sample_range,
         named_bands,
         spectrum_instances,
@@ -7172,6 +7634,7 @@ def main():
         radial_spectrum,
         query,
         spectrum_sample,
+        spectrum_bridge,
         sample_range,
         named_bands,
         spectrum_instances,
@@ -7196,6 +7659,7 @@ def main():
     print("  Spectrum Points   -> Spectrum History -> waterfall rows / custom surfaces")
     print("  Analyzer Spectrum -> Frequency Selection -> downstream Selection inputs")
     print("  Analyzer Spectrum -> Instances / Band Query / Spectrum Sample")
+    print("  Spectrum + arbitrary Geometry -> Spectrum Bridge -> material-ready attributes")
     print("  Spectrum Bars     -> standalone Analyzer wrapper + compatible Spectrum Points")
     print("  Audio Bands       -> named musical ranges + integrated attribute bridge")
 

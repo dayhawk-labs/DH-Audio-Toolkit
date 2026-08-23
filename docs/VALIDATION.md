@@ -18,7 +18,7 @@ To create a clean asset-library build after the tests pass:
 & "C:\path\to\Blender 5.2\blender.exe" --background --factory-startup `
   --python tests/blender_52_regression.py -- `
   --report temp/blender_52_report.json `
-  --release "releases/DH Audio Toolkit 3.9.0.blend"
+  --release "releases/DH Audio Toolkit 3.10.0.blend"
 ```
 
 The release file is rebuilt from `src/dh_audio_toolkit.py`; test node groups,
@@ -47,6 +47,8 @@ The suite checks:
 - named bands, Sample Range, and Band Query clamping;
 - Spectrum Sample per-element field lookup, sampled band indices, paired
   left/right values, and safe carrier clamping;
+- Spectrum Bridge point/instance storage, partial Selection, direct sampled
+  fields, instancer-context lookup, and propagation through Realize Instances;
 - Points, Bars, Instances, Curve, and Fill topology and attribute propagation;
 - Audio Radius behavior;
 - preservation of quiet intermediate fill bands;

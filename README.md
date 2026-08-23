@@ -1,4 +1,4 @@
-DH AUDIO TOOLKIT 3.9.0
+DH AUDIO TOOLKIT 3.10.0
 
 Blender 5.2+
 
@@ -169,6 +169,18 @@ DH Audio Spectrum Sample
 &#x20;   extrusion, displacement, arrays, instances, or stored shader controls.
 
 &#x20;   Paired left/right fields are available for Stereo Analyzer carriers.
+
+
+
+DH Audio Spectrum Bridge
+
+&#x20;   Applies Spectrum Sample to arbitrary target geometry and writes the full
+
+&#x20;   standard spectrum and stereo schemas on points, instances, or both. Band
+
+&#x20;   and Selection remain per-element fields, and all sampled values are also
+
+&#x20;   exposed directly for extrusion, displacement, scaling, and rotation.
 
 
 
@@ -865,6 +877,53 @@ carrier and does not contain another Sample Sound Frequencies node.
 
 ======================================================================
 
+RECIPE 7B: MAP SPECTRUM BANDS ONTO ARBITRARY GEOMETRY
+
+======================================================================
+
+
+
+&#x20;   DH Audio Analyzer \[Spectrum]
+
+&#x20;       -> DH Audio Spectrum Bridge \[Spectrum]
+
+
+
+&#x20;   Any mesh, curve, or instances \[Geometry]
+
+&#x20;       -> DH Audio Spectrum Bridge \[Geometry]
+
+
+
+Connect an integer field such as Index modulo Analyzer Bands to Band. The
+
+Geometry output carries dh\_audio\_amp, dh\_audio\_norm, frequency metadata,
+
+and paired stereo attributes when the source is DH Audio Stereo Analyzer. The
+
+same values remain available as direct fields for Extrude Mesh, Set Position,
+
+Scale Instances, and other geometry operations.
+
+
+
+Store on Points supports real or realized geometry and Material Reader with
+
+Use Instancer off. Store on Instances supports un-realized instances and
+
+Material Reader with Use Instancer on. Both may be enabled, but Band and
+
+Selection evaluate independently in each domain. If Band uses Index on target
+
+instances, enable only Store on Instances unless prototype-point mapping is
+
+also intentional. Disable any domain that no downstream consumer needs.
+
+
+
+
+======================================================================
+
 RECIPE 8: SAMPLE ONE CUSTOM FREQUENCY RANGE
 
 ======================================================================
@@ -1444,6 +1503,8 @@ Start with one of these three paths:
 &#x20;   CUSTOM:
 
 &#x20;       Analyzer -> Spectrum Instances / Band Query / Spectrum Sample
+
+&#x20;       Analyzer + arbitrary Geometry -> Spectrum Bridge
 
 
 

@@ -30,7 +30,7 @@ import wave
 import bpy
 
 
-TOOLKIT_VERSION = "3.9.0"
+TOOLKIT_VERSION = "3.10.0"
 
 PUBLIC_GROUPS = {
     "DH Audio Analyzer": ("GeometryNodeTree", 330, "75e799e2-55ce-553a-8fdf-a74c5cf0de2c"),
@@ -41,6 +41,7 @@ PUBLIC_GROUPS = {
     "DH Audio Frequency Selection": ("GeometryNodeTree", 280, "9b46dff4-fa9d-510f-b0ae-a8af6da87e3a"),
     "DH Audio Band Query": ("GeometryNodeTree", 285, "9b46dff4-fa9d-510f-b0ae-a8af6da87e3a"),
     "DH Audio Spectrum Sample": ("GeometryNodeTree", 310, "9b46dff4-fa9d-510f-b0ae-a8af6da87e3a"),
+    "DH Audio Spectrum Bridge": ("GeometryNodeTree", 340, "a4faf3f4-5a13-5f83-ae97-28993f20ac20"),
     "DH Audio Response": ("GeometryNodeTree", 285, "a4faf3f4-5a13-5f83-ae97-28993f20ac20"),
     "DH Audio Temporal Response": ("GeometryNodeTree", 310, "75e799e2-55ce-553a-8fdf-a74c5cf0de2c"),
     "DH Audio Spectrum History": ("GeometryNodeTree", 310, "de47b34b-1184-5bc8-84ac-3c5ada05f601"),
@@ -59,6 +60,7 @@ PUBLIC_GROUPS = {
 INTERNAL_GROUPS = {
     "DH Internal - Store Spectrum Attributes",
     "DH Internal - Store Stereo Attributes",
+    "DH Internal - Store Spectrum Bridge Attributes",
     "DH Internal - Named Band Map",
     "DH Internal - Store Named Band Metadata",
     "DH Internal - Store Named Bands",
@@ -173,6 +175,15 @@ EXPECTED_PANELS = {
     },
     "DH Audio Spectrum Sample": {
         "Query": False,
+        "Band Values": False,
+        "Stereo Values": False,
+        "Frequency Metadata": True,
+    },
+    "DH Audio Spectrum Bridge": {
+        "Geometry & Spectrum": False,
+        "Band Mapping": False,
+        "Attribute Storage": False,
+        "Result": False,
         "Band Values": False,
         "Stereo Values": False,
         "Frequency Metadata": True,
@@ -501,7 +512,7 @@ def _audit_interface(report):
         )
 
     asset_names = {tree.name for tree in bpy.data.node_groups if tree.asset_data}
-    report.check("Exactly 21 public assets", asset_names == set(PUBLIC_GROUPS), sorted(asset_names))
+    report.check("Exactly 22 public assets", asset_names == set(PUBLIC_GROUPS), sorted(asset_names))
 
     for name, (tree_type, width, catalog) in PUBLIC_GROUPS.items():
         tree = bpy.data.node_groups[name]
@@ -544,6 +555,10 @@ def _audit_interface(report):
         ("DH Audio Stereo Analyzer", "Spacing"): 1.0,
         ("DH Audio Stereo Analyzer", "Channel Spacing"): 1.0,
         ("DH Audio Spectrum Sample", "Band"): 0,
+        ("DH Audio Spectrum Bridge", "Band"): 0,
+        ("DH Audio Spectrum Bridge", "Selection"): True,
+        ("DH Audio Spectrum Bridge", "Store on Points"): True,
+        ("DH Audio Spectrum Bridge", "Store on Instances"): True,
         ("DH Audio Spectrum Bars", "Bar Profile"): "Box",
         ("DH Audio Spectrum Curve", "Curve Style"): "Smooth",
         ("DH Audio Response", "Gain"): 1.0,
@@ -613,6 +628,36 @@ def _audit_interface(report):
         {item.name: item.structure_type for item in sample_outputs},
     )
 
+    spectrum_bridge = bpy.data.node_groups["DH Audio Spectrum Bridge"]
+    bridge_band = _interface_socket(spectrum_bridge, "Band", "INPUT")
+    bridge_selection = _interface_socket(spectrum_bridge, "Selection", "INPUT")
+    bridge_geometry = _interface_socket(spectrum_bridge, "Geometry", "OUTPUT")
+    bridge_field_outputs = [
+        item for item in spectrum_bridge.interface.items_tree
+        if item.item_type == "SOCKET"
+        and item.in_out == "OUTPUT"
+        and item.name != "Geometry"
+    ]
+    report.check(
+        "Spectrum Bridge Band and Selection are field inputs",
+        bridge_band.structure_type == "FIELD"
+        and bridge_selection.structure_type == "FIELD",
+        {
+            "Band": bridge_band.structure_type,
+            "Selection": bridge_selection.structure_type,
+        },
+    )
+    report.check(
+        "Spectrum Bridge geometry is a single value and sampled outputs are fields",
+        bridge_geometry.structure_type == "SINGLE"
+        and bridge_field_outputs
+        and all(item.structure_type == "FIELD" for item in bridge_field_outputs),
+        {
+            "Geometry": bridge_geometry.structure_type,
+            "fields": {item.name: item.structure_type for item in bridge_field_outputs},
+        },
+    )
+
     boolean_inputs = {
         ("DH Audio Analyzer", "Use Scene Time"),
         ("DH Audio Analyzer", "All Channels"),
@@ -623,6 +668,9 @@ def _audit_interface(report):
         ("DH Audio Stereo Analyzer", "Clamp to 1"),
         ("DH Audio Bands", "Store on Points"),
         ("DH Audio Bands", "Store on Instances"),
+        ("DH Audio Spectrum Bridge", "Selection"),
+        ("DH Audio Spectrum Bridge", "Store on Points"),
+        ("DH Audio Spectrum Bridge", "Store on Instances"),
         ("DH Audio Spectrum Instances", "Realize Instances"),
         ("DH Audio Material Reader", "Use Instancer"),
         ("DH Audio Shader Response", "Clamp to 1"),
@@ -1658,6 +1706,206 @@ def _test_spectrum_sample(report):
     )
 
 
+def _test_spectrum_bridge(report):
+    def synthetic_source(tree):
+        source = tree.nodes.new("GeometryNodeMeshLine")
+        source.mode = "OFFSET"
+        _set_input(source, "Count", 4)
+        source_index = tree.nodes.new("GeometryNodeInputIndex")
+
+        amplitude_scale = tree.nodes.new("ShaderNodeMath")
+        amplitude_scale.operation = "MULTIPLY"
+        _set_input(amplitude_scale, 1, 0.25)
+        amplitude_add = tree.nodes.new("ShaderNodeMath")
+        amplitude_add.operation = "ADD"
+        _set_input(amplitude_add, 1, 0.1)
+        tree.links.new(_socket(source_index.outputs, "Index"), _socket(amplitude_scale.inputs, 0))
+        tree.links.new(_socket(amplitude_scale.outputs, "Value"), _socket(amplitude_add.inputs, 0))
+
+        left_add = tree.nodes.new("ShaderNodeMath")
+        left_add.operation = "ADD"
+        _set_input(left_add, 1, 10.0)
+        right_add = tree.nodes.new("ShaderNodeMath")
+        right_add.operation = "ADD"
+        _set_input(right_add, 1, 20.0)
+        tree.links.new(_socket(source_index.outputs, "Index"), _socket(left_add.inputs, 0))
+        tree.links.new(_socket(source_index.outputs, "Index"), _socket(right_add.inputs, 0))
+
+        source_amp = _store_attribute(
+            tree,
+            _socket(source.outputs, "Mesh"),
+            _socket(amplitude_add.outputs, "Value"),
+            "dh_audio_amp",
+        )
+        source_band = _store_attribute(
+            tree,
+            _socket(source_amp.outputs, "Geometry"),
+            _socket(source_index.outputs, "Index"),
+            "dh_audio_band_index",
+            "INT",
+        )
+        source_left = _store_attribute(
+            tree,
+            _socket(source_band.outputs, "Geometry"),
+            _socket(left_add.outputs, "Value"),
+            "dh_audio_left_amp",
+        )
+        source_right = _store_attribute(
+            tree,
+            _socket(source_left.outputs, "Geometry"),
+            _socket(right_add.outputs, "Value"),
+            "dh_audio_right_amp",
+        )
+        return _socket(source_right.outputs, "Geometry")
+
+    def repeating_band_field(tree):
+        target_index = tree.nodes.new("GeometryNodeInputIndex")
+        modulo = tree.nodes.new("FunctionNodeIntegerMath")
+        modulo.operation = "MODULO"
+        _set_input(modulo, 1, 4)
+        tree.links.new(_socket(target_index.outputs, "Index"), _socket(modulo.inputs, 0))
+        return target_index, _socket(modulo.outputs, "Value")
+
+    def close(actual, expected):
+        return actual is not None and len(actual) == len(expected) and all(
+            abs(float(a) - float(b)) < 1e-5 for a, b in zip(actual, expected)
+        )
+
+    # Point-domain storage, partial Selection, and direct output fields.
+    point_tree, _group_in, point_out = _new_geometry_tree("DH Test Spectrum Bridge Points")
+    source_geometry = synthetic_source(point_tree)
+    target = point_tree.nodes.new("GeometryNodeMeshLine")
+    target.mode = "OFFSET"
+    _set_input(target, "Count", 6)
+    target_index, band_field = repeating_band_field(point_tree)
+
+    selected = point_tree.nodes.new("FunctionNodeCompare")
+    selected.data_type = "INT"
+    selected.operation = "LESS_THAN"
+    _set_input(selected, "B", 3)
+    point_tree.links.new(_socket(target_index.outputs, "Index"), _socket(selected.inputs, "A"))
+
+    bridge = _group_node(point_tree, "DH Audio Spectrum Bridge")
+    _set_input(bridge, "Store on Points", True)
+    _set_input(bridge, "Store on Instances", False)
+    point_tree.links.new(_socket(target.outputs, "Mesh"), _socket(bridge.inputs, "Geometry"))
+    point_tree.links.new(source_geometry, _socket(bridge.inputs, "Spectrum"))
+    point_tree.links.new(band_field, _socket(bridge.inputs, "Band"))
+    point_tree.links.new(_socket(selected.outputs, "Result"), _socket(bridge.inputs, "Selection"))
+
+    direct = _store_attribute(
+        point_tree,
+        _socket(bridge.outputs, "Geometry"),
+        _socket(bridge.outputs, "Amplitude"),
+        "dh_test_bridge_direct",
+    )
+    point_tree.links.new(_socket(direct.outputs, "Geometry"), _socket(point_out.inputs, "Geometry"))
+    point_obj = _new_host("DH Test Spectrum Bridge Point Host", point_tree)
+    point_attributes = _snapshot(point_obj)["attributes"]
+
+    sampled = [0.1, 0.35, 0.6, 0.85, 0.1, 0.35]
+    selected_sampled = [0.1, 0.35, 0.6, 0.0, 0.0, 0.0]
+    report.check(
+        "Spectrum Bridge stores sampled amplitudes on selected points",
+        close(point_attributes.get("dh_audio_amp"), selected_sampled),
+        point_attributes.get("dh_audio_amp"),
+    )
+    report.check(
+        "Spectrum Bridge direct fields remain available outside storage Selection",
+        close(point_attributes.get("dh_test_bridge_direct"), sampled),
+        point_attributes.get("dh_test_bridge_direct"),
+    )
+    report.check(
+        "Spectrum Bridge stores paired stereo values on points",
+        close(point_attributes.get("dh_audio_left_amp"), [10.0, 11.0, 12.0, 0.0, 0.0, 0.0])
+        and close(point_attributes.get("dh_audio_right_amp"), [20.0, 21.0, 22.0, 0.0, 0.0, 0.0]),
+        {
+            "left": point_attributes.get("dh_audio_left_amp"),
+            "right": point_attributes.get("dh_audio_right_amp"),
+        },
+    )
+
+    # Instance-domain storage must be readable before realization and should
+    # propagate to the realized mesh in Blender 5.2.
+    instance_tree, _group_in, instance_out = _new_geometry_tree("DH Test Spectrum Bridge Instances")
+    instance_source = synthetic_source(instance_tree)
+    points = instance_tree.nodes.new("GeometryNodeMeshLine")
+    points.mode = "OFFSET"
+    _set_input(points, "Count", 6)
+    _target_index, instance_band = repeating_band_field(instance_tree)
+    cube = instance_tree.nodes.new("GeometryNodeMeshCube")
+    _set_input(cube, "Size", (0.2, 0.2, 0.2))
+    instance_on_points = instance_tree.nodes.new("GeometryNodeInstanceOnPoints")
+    instance_tree.links.new(_socket(points.outputs, "Mesh"), _socket(instance_on_points.inputs, "Points"))
+    instance_tree.links.new(_socket(cube.outputs, "Mesh"), _socket(instance_on_points.inputs, "Instance"))
+
+    instance_bridge = _group_node(instance_tree, "DH Audio Spectrum Bridge")
+    _set_input(instance_bridge, "Store on Points", False)
+    _set_input(instance_bridge, "Store on Instances", True)
+    instance_tree.links.new(_socket(instance_on_points.outputs, "Instances"), _socket(instance_bridge.inputs, "Geometry"))
+    instance_tree.links.new(instance_source, _socket(instance_bridge.inputs, "Spectrum"))
+    instance_tree.links.new(instance_band, _socket(instance_bridge.inputs, "Band"))
+
+    read_amp = instance_tree.nodes.new("GeometryNodeInputNamedAttribute")
+    read_amp.data_type = "FLOAT"
+    _set_input(read_amp, "Name", "dh_audio_amp")
+    scale_vector = instance_tree.nodes.new("ShaderNodeCombineXYZ")
+    for axis in ("X", "Y", "Z"):
+        instance_tree.links.new(_socket(read_amp.outputs, "Attribute"), _socket(scale_vector.inputs, axis))
+    scale_instances = instance_tree.nodes.new("GeometryNodeScaleInstances")
+    instance_tree.links.new(_socket(instance_bridge.outputs, "Geometry"), _socket(scale_instances.inputs, "Instances"))
+    instance_tree.links.new(_socket(scale_vector.outputs, "Vector"), _socket(scale_instances.inputs, "Scale"))
+    realize = instance_tree.nodes.new("GeometryNodeRealizeInstances")
+    instance_tree.links.new(_socket(scale_instances.outputs, "Instances"), _socket(realize.inputs, "Geometry"))
+    instance_tree.links.new(_socket(realize.outputs, "Geometry"), _socket(instance_out.inputs, "Geometry"))
+
+    instance_obj = _new_host("DH Test Spectrum Bridge Instance Host", instance_tree)
+    instance_snapshot = _snapshot(instance_obj)
+    vertices = instance_snapshot["vertices"]
+    dimensions = []
+    for instance_index in range(6):
+        block = vertices[instance_index * 8:(instance_index + 1) * 8]
+        dimensions.append(
+            max(vertex[0] for vertex in block) - min(vertex[0] for vertex in block)
+        )
+    expected_dimensions = [value * 0.2 for value in sampled]
+    realized_amp = instance_snapshot["attributes"].get("dh_audio_amp")
+    expected_realized_amp = [
+        value
+        for value in sampled
+        for _vertex in range(8)
+    ]
+    report.check(
+        "Spectrum Bridge instance attributes drive instancer-context fields",
+        close(dimensions, expected_dimensions),
+        dimensions,
+    )
+    report.check(
+        "Spectrum Bridge instance attributes propagate through Realize Instances",
+        close(realized_amp, expected_realized_amp),
+        realized_amp,
+    )
+
+    internal = bpy.data.node_groups["DH Internal - Store Spectrum Bridge Attributes"]
+    writers = [
+        node for node in internal.nodes
+        if node.bl_idname == "GeometryNodeStoreNamedAttribute"
+    ]
+    expected_writer_count = len(SPECTRUM_ATTRIBUTES) + len(STEREO_ATTRIBUTES)
+    report.check(
+        "Spectrum Bridge internal writer covers both point and instance domains",
+        len(writers) == expected_writer_count * 2
+        and sum(node.domain == "POINT" for node in writers) == expected_writer_count
+        and sum(node.domain == "INSTANCE" for node in writers) == expected_writer_count
+        and all(_socket(node.inputs, "Selection").is_linked for node in writers),
+        {
+            "count": len(writers),
+            "point": sum(node.domain == "POINT" for node in writers),
+            "instance": sum(node.domain == "INSTANCE" for node in writers),
+        },
+    )
+
+
 def _analyzer_points_chain(tree, sound):
     analyzer = _group_node(tree, "DH Audio Analyzer")
     _set_input(analyzer, "Sound", sound)
@@ -1862,7 +2110,7 @@ def run_validation(repo_root=None, release_path=None, report_path=None):
 
         report.check("Repeated build structural signature", first_signature == second_signature, {"first": first_signature, "second": second_signature})
         report.check("Repeated build catalog bytes", first_catalog == second_catalog, hashlib.sha256(second_catalog).hexdigest())
-        report.check("Exactly 26 generated groups", len([tree for tree in bpy.data.node_groups if tree.name in PUBLIC_GROUPS or tree.name in INTERNAL_GROUPS]) == 26, len(bpy.data.node_groups))
+        report.check("Exactly 28 generated groups", len([tree for tree in bpy.data.node_groups if tree.name in PUBLIC_GROUPS or tree.name in INTERNAL_GROUPS]) == 28, len(bpy.data.node_groups))
         handler_count = sum(1 for handler in bpy.app.handlers.save_post if getattr(handler, "__name__", "") == "_dh_audio_write_catalogs_on_save")
         report.check("Exactly one toolkit save handler", handler_count == 1, handler_count)
 
@@ -1882,6 +2130,7 @@ def run_validation(repo_root=None, release_path=None, report_path=None):
         report.section("Named-band tests completed", lambda: _test_bands(report, sound))
         report.section("Sample Range and Band Query tests completed", lambda: _test_sample_range_and_query(report, sound))
         report.section("Spectrum Sample tests completed", lambda: _test_spectrum_sample(report))
+        report.section("Spectrum Bridge tests completed", lambda: _test_spectrum_bridge(report))
         report.section("Visualizer tests completed", lambda: _test_visualizers(report, sound))
         report.section("Synthetic fill and curve tests completed", lambda: _test_synthetic_fill_and_curve(report))
         _remove_test_data()
@@ -1890,8 +2139,8 @@ def run_validation(repo_root=None, release_path=None, report_path=None):
         release = _clean_release(repo_root, release_path)
         report.observations["release"] = release
         report.check("Release contains no scene objects", release["objects"] == 0, release)
-        report.check("Release contains 26 generated groups", release["node_groups"] == 26, release)
-        report.check("Release contains 21 public assets", release["assets"] == 21, release)
+        report.check("Release contains 28 generated groups", release["node_groups"] == 28, release)
+        report.check("Release contains 22 public assets", release["assets"] == 22, release)
         report.check("Internal groups are not assets", not release["internal_assets"], release["internal_assets"])
         report.check("Release catalog sidecar exists", Path(release["catalog_path"]).is_file(), release["catalog_path"])
         report.check("Release repeat-build is deterministic", release["repeat_build_deterministic"], release)

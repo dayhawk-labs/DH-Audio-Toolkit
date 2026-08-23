@@ -298,12 +298,31 @@ Verified examples:
 - Store Named Attribute on the `INSTANCE` domain creates values that are
   readable in the instancer context before realization. This was verified by
   reading a stored value with Named Attribute and using it to scale instances.
-- An instance-domain value alone should not be expected to become the same
-  point-domain value after Realize Instances; it evaluated as zero in that
-  specific test.
+- An instance-domain float stored immediately before Realize Instances
+  propagated to every realized mesh vertex in the Blender 5.2 regression.
+- A disabled point-domain Store Named Attribute chain implemented only by a
+  false `Selection` can still create a zero-valued point attribute. That value
+  shadows the same-named instance attribute after realization. A Geometry
+  Switch must bypass the disabled writer chain completely when domain toggles
+  are expected to preserve instance-to-realized propagation. DH Audio Spectrum
+  Bridge uses this bypass design for both storage domains.
 - DH Audio Bands defaults to storing named bands on both points and instances.
   With both enabled, named values remain available on realized point geometry
   and in the instancer context used by DH Audio Material Reader.
+
+## Store Named Attribute domain controls
+
+- Node identifier: `GeometryNodeStoreNamedAttribute`
+- Verified RNA properties: `data_type` and `domain`.
+- Relevant `domain` values include `POINT` and `INSTANCE`.
+- Verified input sockets are `Geometry`, `Selection`, `Name`, and `Value`;
+  the geometry output is named `Geometry`.
+- Point and instance writers may store the same attribute name. The active
+  field context determines how Band, Index, ID, and Selection evaluate on each
+  domain.
+- When both domains are enabled, a topology-dependent Band field can produce
+  different values on points and instances. Use an explicit stable ID or band
+  field when both copies must match element-for-element.
 
 ## Field-driven Sample Index lookup
 
@@ -318,6 +337,10 @@ Verified examples:
   `Band = Index modulo 4`, producing the expected repeating sequence. This is
   the Blender 5.2 basis for `DH Audio Spectrum Sample`; it reuses carrier
   attributes and does not add another audio sampler.
+- The same sequence was verified through `DH Audio Spectrum Bridge` on target
+  points and on instances. Instance-domain values drove Scale Instances before
+  realization and propagated to the realized mesh when the disabled point
+  writer chain was bypassed with a Geometry Switch.
 
 ## Other verified Blender 5.2 identifiers
 
