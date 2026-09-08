@@ -106,11 +106,38 @@ jobs:
           python tools/check_consistency.py --require-release
 
       - name: Install virtual display
-        run: sudo apt-get update && sudo apt-get install -y xvfb
+        run: sudo apt-get update && sudo apt-get install -y imagemagick xvfb
 
       - name: Capture Node Editor screenshots
         working-directory: source
-        run: xvfb-run --auto-servernum blender --factory-startup --python tools/capture_node_editor_screenshots.py
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf temp/node-previews
+          mkdir -p temp/node-previews temp/node-ready
+          for group in temporal-response spectrum-history material-reader; do
+            ready="$(pwd)/temp/node-ready/${group}"
+            output="$(pwd)/temp/node-previews/${group}.png"
+            timeout 60s xvfb-run --auto-servernum --server-args="-screen 0 1600x1000x24" \
+              bash -c '
+                blender --factory-startup --python tools/prepare_node_editor_screenshot.py -- --group "$1" --ready-file "$2" &
+                blender_pid=$!
+                for _ in $(seq 1 120); do
+                  if [[ -f "$2" ]]; then
+                    import -window root "$3"
+                    kill "$blender_pid" || true
+                    wait "$blender_pid" || true
+                    exit 0
+                  fi
+                  sleep 0.5
+                done
+                kill "$blender_pid" || true
+                wait "$blender_pid" || true
+                echo "Timed out waiting for Blender Node Editor" >&2
+                exit 1
+              ' _ "$group" "$ready" "$output"
+          done
+          identify temp/node-previews/*.png
 
       - name: Upload node graph previews
         uses: actions/upload-artifact@v4
