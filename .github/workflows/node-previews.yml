@@ -57,7 +57,7 @@ jobs:
             GROUP="$group" \
             OUTPUT="${GITHUB_WORKSPACE}/temp/public-node-previews/${filename}" \
             MANIFEST="$MANIFEST" BLEND_FILE="$BLEND_FILE" BLENDER="$BLENDER" \
-              bash blender-node-previews/examples/capture-one.sh
+              bash -c 'cd blender-node-previews && bash examples/capture-one.sh'
           done < <(python3 - <<'PY'
           import json
           from pathlib import Path
