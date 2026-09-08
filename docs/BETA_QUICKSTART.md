@@ -1,4 +1,4 @@
-# DH Audio Toolkit 3.11.1 quick start
+# DH Audio Toolkit 3.12.0 quick start
 
 Requires Blender 5.2 or newer. Keep the release `.blend` and its adjacent
 `blender_assets.cats.txt` together in one Blender Asset Library folder.

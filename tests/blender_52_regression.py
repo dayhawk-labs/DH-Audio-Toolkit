@@ -154,6 +154,7 @@ EXPECTED_PANELS = {
     "DH Audio Temporal Response": {
         "Source": False,
         "Timing": False,
+        "Peak Hold": True,
         "Outputs": False,
     },
     "DH Audio Spectrum History": {
@@ -177,6 +178,7 @@ EXPECTED_PANELS = {
         "Stereo Attributes": False,
         "Frequency Metadata": True,
         "Spectrum History": True,
+        "Temporal Response": True,
         "Named Bands": False,
     },
     "DH Audio Spectrum Sample": {
@@ -656,6 +658,9 @@ def _audit_interface(report):
         ("DH Audio Response", "Response"): 0.7,
         ("DH Audio Temporal Response", "Attack"): 0.05,
         ("DH Audio Temporal Response", "Release"): 0.25,
+        ("DH Audio Temporal Response", "Peak Hold"): True,
+        ("DH Audio Temporal Response", "Peak Hold Time"): 0.2,
+        ("DH Audio Temporal Response", "Peak Decay"): 0.5,
         ("DH Audio Spectrum History", "Frames"): 32,
         ("DH Audio Spectrum History", "History Offset"): [0.0, -0.15, 0.0],
         ("DH Audio Spectrum History", "Reset"): False,
@@ -1187,6 +1192,8 @@ def _test_temporal_response(report):
     temporal = _group_node(tree, "DH Audio Temporal Response")
     _set_input(temporal, "Attack", 0.1)
     _set_input(temporal, "Release", 0.4)
+    _set_input(temporal, "Peak Hold Time", 0.2)
+    _set_input(temporal, "Peak Decay", 0.2)
     tree.links.new(_socket(metadata.outputs, "Geometry"), _socket(temporal.inputs, "Spectrum"))
     output_store = _store_attribute(
         tree,
@@ -1194,15 +1201,24 @@ def _test_temporal_response(report):
         _socket(temporal.outputs, "Amplitude"),
         "dh_test_temporal_output",
     )
-    tree.links.new(_socket(output_store.outputs, "Geometry"), _socket(group_out.inputs, "Geometry"))
+    peak_output_store = _store_attribute(
+        tree,
+        _socket(output_store.outputs, "Geometry"),
+        _socket(temporal.outputs, "Peak"),
+        "dh_test_peak_output",
+    )
+    tree.links.new(_socket(peak_output_store.outputs, "Geometry"), _socket(group_out.inputs, "Geometry"))
 
     obj = _new_host("DH Test Temporal Response Host", tree)
     values = {}
+    peaks = {}
     metadata_preserved = True
     output_field_matches = True
+    peak_output_matches = True
     for frame in range(1, 31):
         snapshot = _snapshot(obj, frame)
         values[frame] = snapshot["attributes"]["dh_audio_amp"][0]
+        peaks[frame] = snapshot["attributes"]["dh_audio_peak"][0]
         metadata_preserved = (
             metadata_preserved
             and snapshot["attributes"].get("dh_test_metadata") == [42]
@@ -1212,6 +1228,13 @@ def _test_temporal_response(report):
             and abs(
                 snapshot["attributes"]["dh_test_temporal_output"][0]
                 - values[frame]
+            ) < 1e-6
+        )
+        peak_output_matches = (
+            peak_output_matches
+            and abs(
+                snapshot["attributes"]["dh_test_peak_output"][0]
+                - peaks[frame]
             ) < 1e-6
         )
 
@@ -1236,12 +1259,42 @@ def _test_temporal_response(report):
     )
     report.check("Temporal Response preserves current metadata", metadata_preserved)
     report.check("Temporal Response Amplitude output matches stored attribute", output_field_matches)
+    report.check("Temporal Response Peak output matches stored attribute", peak_output_matches)
+    report.check(
+        "Temporal Response peak holds before decaying toward live amplitude",
+        (
+            abs(peaks[19] - values[19]) < 1e-6
+            and abs(peaks[23] - peaks[19]) < 1e-6
+            and values[23] < peaks[23]
+            and values[30] < peaks[30] < peaks[23]
+        ),
+        {
+            "peak_19": peaks[19],
+            "peak_23": peaks[23],
+            "peak_30": peaks[30],
+            "amplitude_23": values[23],
+            "amplitude_30": values[30],
+        },
+    )
 
     sample_previous = bpy.data.node_groups["DH Audio Temporal Response"].nodes.get("Sample Previous Band")
     report.check(
         "Temporal Response does not clamp new band indices",
         sample_previous is not None and sample_previous.bl_idname == "GeometryNodeSampleIndex" and not sample_previous.clamp,
         None if sample_previous is None else sample_previous.clamp,
+    )
+
+    _set_input(temporal, "Peak Hold", False)
+    disabled_matches_live = True
+    for frame in range(1, 21):
+        snapshot = _snapshot(obj, frame)
+        disabled_matches_live = disabled_matches_live and abs(
+            snapshot["attributes"]["dh_audio_peak"][0]
+            - snapshot["attributes"]["dh_audio_amp"][0]
+        ) < 1e-6
+    report.check(
+        "Temporal Response disabled Peak Hold preserves live amplitude as Peak",
+        disabled_matches_live,
     )
 
     _set_input(temporal, "Attack", 0.0)
@@ -1269,6 +1322,9 @@ def _test_temporal_response(report):
         "frame_19": values[19],
         "frame_20": values[20],
         "frame_30": values[30],
+        "peak_19": peaks[19],
+        "peak_23": peaks[23],
+        "peak_30": peaks[30],
         "timeline_requirement": "Play sequentially or bake/cache; an uncached forward jump advances one simulation step.",
     }
 

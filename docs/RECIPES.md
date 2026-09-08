@@ -63,6 +63,12 @@ Defaults are Attack `0.05` seconds and Release `0.25` seconds. Set either to
 zero for an immediate response in that direction. This group uses a Simulation
 Zone, so play the timeline sequentially or bake it for complete history.
 
+The collapsed **Peak Hold** panel is enabled by default. It holds each band's
+smoothed peak for `0.20` seconds, then decays it exponentially toward the live
+amplitude over `0.50` seconds. Use the **Peak** output or `dh_audio_peak` for a
+separate marker; **Amplitude** and `dh_audio_amp` remain the live value. Turn
+off **Peak Hold** when a consumer should receive the live value on both outputs.
+
 ## 5. Spectrum waterfall history
 
 ```text

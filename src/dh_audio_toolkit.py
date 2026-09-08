@@ -4,8 +4,13 @@ import os
 from pathlib import Path
 
 # =====================================================================
-# DH AUDIO TOOLKIT 3.11.1
+# DH AUDIO TOOLKIT 3.12.0
 # Blender 5.2+
+#
+# 3.12.0:
+# - Added optional Peak Hold + Decay to DH Audio Temporal Response. The live
+#   dh_audio_amp response remains unchanged; dh_audio_peak is available for
+#   peak-marker geometry and materials.
 #
 # 3.11.1:
 # - Release packaging now excludes Blender recovery backups and validates the
@@ -346,6 +351,10 @@ SPECTRUM_ATTRS = [
     ("Center Frequency", "dh_audio_center_hz",    "FLOAT"),
     ("High Frequency",   "dh_audio_high_hz",      "FLOAT"),
     ("Bandwidth",        "dh_audio_bandwidth_hz", "FLOAT"),
+]
+
+TEMPORAL_ATTRS = [
+    ("Peak", "dh_audio_peak", "FLOAT"),
 ]
 
 HISTORY_ATTRS = [
@@ -1519,7 +1528,7 @@ def create_response_group():
 # =====================================================================
 
 def create_temporal_response_group():
-    """Smooth dh_audio_amp on reusable spectrum carrier geometry over time."""
+    """Smooth dh_audio_amp and optionally track held peaks over time."""
     tree = bpy.data.node_groups.new(GROUP_TEMPORAL, "GeometryNodeTree")
     tree["dh_role"] = "temporal_response"
 
@@ -1532,6 +1541,11 @@ def create_temporal_response_group():
         name="Timing",
         description="Frame-rate-independent exponential smoothing times",
         default_closed=False,
+    )
+    peak_panel = tree.interface.new_panel(
+        name="Peak Hold",
+        description="Optional peak marker with a hold period and exponential decay",
+        default_closed=True,
     )
     outputs_panel = tree.interface.new_panel(
         name="Outputs",
@@ -1563,6 +1577,31 @@ def create_temporal_response_group():
         structure_type="SINGLE",
     )
     new_socket(
+        tree, "Peak Hold", "INPUT", "NodeSocketBool",
+        parent=peak_panel,
+        default=True,
+        description="Track a held peak alongside the smoothed live amplitude",
+        structure_type="SINGLE",
+    )
+    new_socket(
+        tree, "Peak Hold Time", "INPUT", "NodeSocketFloatTimeAbsolute",
+        parent=peak_panel,
+        default=0.20,
+        min_value=0.0,
+        max_value=60.0,
+        description="Seconds a falling peak remains fixed before it decays",
+        structure_type="SINGLE",
+    )
+    new_socket(
+        tree, "Peak Decay", "INPUT", "NodeSocketFloatTimeAbsolute",
+        parent=peak_panel,
+        default=0.50,
+        min_value=0.0,
+        max_value=60.0,
+        description="Seconds for a released peak to exponentially approach live amplitude",
+        structure_type="SINGLE",
+    )
+    new_socket(
         tree, "Spectrum", "OUTPUT", "NodeSocketGeometry",
         parent=outputs_panel,
         description="Current spectrum geometry with smoothed dh_audio_amp",
@@ -1571,6 +1610,12 @@ def create_temporal_response_group():
         tree, "Amplitude", "OUTPUT", "NodeSocketFloat",
         parent=outputs_panel,
         description="Smoothed dh_audio_amp field",
+        structure_type="FIELD",
+    )
+    new_socket(
+        tree, "Peak", "OUTPUT", "NodeSocketFloat",
+        parent=outputs_panel,
+        description="Held and decaying dh_audio_peak field; equals Amplitude when Peak Hold is off",
         structure_type="FIELD",
     )
 
@@ -1626,6 +1671,18 @@ def create_temporal_response_group():
     )
     previous_amp.name = "Previous Amplitude"
 
+    previous_peak = named_attribute_node(
+        nodes, "dh_audio_peak", "FLOAT",
+        location=(-760, 320), label="Previous Peak",
+    )
+    previous_peak.name = "Previous Peak"
+
+    previous_peak_age = named_attribute_node(
+        nodes, "dh_audio_peak_age", "FLOAT",
+        location=(-760, 610), label="Previous Peak Age",
+    )
+    previous_peak_age.name = "Previous Peak Age"
+
     index = nodes.new("GeometryNodeInputIndex")
     index.name = "Current Band Index"
     index.label = "Current Band Index"
@@ -1645,6 +1702,30 @@ def create_temporal_response_group():
     link(tree, simulation_in, "Spectrum State", sample_previous, "Geometry")
     link(tree, previous_amp, "Attribute", sample_previous, "Value")
     link(tree, index, "Index", sample_previous, "Index")
+
+    sample_previous_peak = nodes.new("GeometryNodeSampleIndex")
+    sample_previous_peak.name = "Sample Previous Peak"
+    sample_previous_peak.label = "Previous Peak by Index"
+    sample_previous_peak.data_type = "FLOAT"
+    sample_previous_peak.domain = "POINT"
+    sample_previous_peak.clamp = False
+    sample_previous_peak.location = (-500, 320)
+    sample_previous_peak.width = 220
+    link(tree, simulation_in, "Spectrum State", sample_previous_peak, "Geometry")
+    link(tree, previous_peak, "Attribute", sample_previous_peak, "Value")
+    link(tree, index, "Index", sample_previous_peak, "Index")
+
+    sample_previous_peak_age = nodes.new("GeometryNodeSampleIndex")
+    sample_previous_peak_age.name = "Sample Previous Peak Age"
+    sample_previous_peak_age.label = "Previous Peak Age by Index"
+    sample_previous_peak_age.data_type = "FLOAT"
+    sample_previous_peak_age.domain = "POINT"
+    sample_previous_peak_age.clamp = False
+    sample_previous_peak_age.location = (-500, 610)
+    sample_previous_peak_age.width = 220
+    link(tree, simulation_in, "Spectrum State", sample_previous_peak_age, "Geometry")
+    link(tree, previous_peak_age, "Attribute", sample_previous_peak_age, "Value")
+    link(tree, index, "Index", sample_previous_peak_age, "Index")
 
     rising = nodes.new("FunctionNodeCompare")
     rising.name = "Amplitude Rising"
@@ -1709,6 +1790,108 @@ def create_temporal_response_group():
     link(tree, sample_previous, "Value", smoothed, 0)
     link(tree, scaled_delta, "Value", smoothed, 1)
 
+    peak_rising = nodes.new("FunctionNodeCompare")
+    peak_rising.name = "Peak Rising"
+    peak_rising.label = "Live Amplitude > Previous Peak"
+    peak_rising.data_type = "FLOAT"
+    peak_rising.operation = "GREATER_THAN"
+    peak_rising.location = (320, 640)
+    link(tree, smoothed, "Value", peak_rising, "A")
+    link(tree, sample_previous_peak, "Value", peak_rising, "B")
+
+    peak_age = math_node(
+        nodes, "Peak Age", "ADD", (-180, 770), label="Previous Age + Delta Time"
+    )
+    link(tree, sample_previous_peak_age, "Value", peak_age, 0)
+    link(tree, simulation_in, "Delta Time", peak_age, 1)
+
+    holding = nodes.new("FunctionNodeCompare")
+    holding.name = "Peak Holding"
+    holding.label = "Peak Age < Hold Time"
+    holding.data_type = "FLOAT"
+    holding.operation = "LESS_THAN"
+    holding.location = (60, 770)
+    link(tree, peak_age, "Value", holding, "A")
+    link(tree, group_in, "Peak Hold Time", holding, "B")
+
+    safe_peak_decay = math_node(
+        nodes, "Safe Peak Decay", "MAXIMUM", (60, 600), label="Max(Peak Decay, epsilon)"
+    )
+    set_default(safe_peak_decay, 1, 0.00001)
+    link(tree, group_in, "Peak Decay", safe_peak_decay, 0)
+
+    peak_time_ratio = math_node(
+        nodes, "Peak Delta over Decay", "DIVIDE", (250, 520), label="Delta Time / Peak Decay"
+    )
+    link(tree, simulation_in, "Delta Time", peak_time_ratio, 0)
+    link(tree, safe_peak_decay, "Value", peak_time_ratio, 1)
+
+    negative_peak_ratio = math_node(
+        nodes, "Negative Peak Time Ratio", "MULTIPLY", (440, 520), label="-Delta / Peak Decay"
+    )
+    set_default(negative_peak_ratio, 1, -1.0)
+    link(tree, peak_time_ratio, "Value", negative_peak_ratio, 0)
+
+    peak_decay = math_node(
+        nodes, "Peak Exponential Decay", "EXPONENT", (630, 520), label="exp(-Delta / Peak Decay)"
+    )
+    link(tree, negative_peak_ratio, "Value", peak_decay, 0)
+
+    peak_alpha = math_node(
+        nodes, "Peak Frame Blend", "SUBTRACT", (630, 640), label="1 - Peak Decay"
+    )
+    set_default(peak_alpha, 0, 1.0)
+    link(tree, peak_decay, "Value", peak_alpha, 1)
+
+    peak_delta = math_node(
+        nodes, "Peak Delta", "SUBTRACT", (820, 520), label="Live - Previous Peak"
+    )
+    link(tree, smoothed, "Value", peak_delta, 0)
+    link(tree, sample_previous_peak, "Value", peak_delta, 1)
+
+    scaled_peak_delta = math_node(
+        nodes, "Scaled Peak Delta", "MULTIPLY", (1010, 520), label="Peak Delta × Frame Blend"
+    )
+    link(tree, peak_delta, "Value", scaled_peak_delta, 0)
+    link(tree, peak_alpha, "Value", scaled_peak_delta, 1)
+
+    decayed_peak = math_node(
+        nodes, "Decayed Peak", "ADD", (1200, 520), label="Previous Peak + Decay"
+    )
+    link(tree, sample_previous_peak, "Value", decayed_peak, 0)
+    link(tree, scaled_peak_delta, "Value", decayed_peak, 1)
+
+    peak_floor = math_node(
+        nodes, "Peak Floor", "MAXIMUM", (1390, 520), label="Max(Live, Decayed Peak)"
+    )
+    link(tree, smoothed, "Value", peak_floor, 0)
+    link(tree, decayed_peak, "Value", peak_floor, 1)
+
+    held_peak = switch_float_node(nodes, "Peak Hold Switch", (1390, 680), label="Hold / Decay")
+    link(tree, holding, "Result", held_peak, "Switch")
+    link(tree, peak_floor, "Value", held_peak, "False")
+    link(tree, sample_previous_peak, "Value", held_peak, "True")
+
+    tracked_peak = switch_float_node(nodes, "Peak Rise Switch", (1580, 680), label="New Peak / Prior Peak")
+    link(tree, peak_rising, "Result", tracked_peak, "Switch")
+    link(tree, held_peak, "Output", tracked_peak, "False")
+    link(tree, smoothed, "Value", tracked_peak, "True")
+
+    tracked_peak_age = switch_float_node(nodes, "Peak Age Reset", (1580, 850), label="Reset Age on New Peak")
+    link(tree, peak_rising, "Result", tracked_peak_age, "Switch")
+    link(tree, peak_age, "Value", tracked_peak_age, "False")
+    set_default(tracked_peak_age, "True", 0.0)
+
+    output_peak = switch_float_node(nodes, "Peak Hold Enabled", (1770, 680), label="Peak / Live Amplitude")
+    link(tree, group_in, "Peak Hold", output_peak, "Switch")
+    link(tree, smoothed, "Value", output_peak, "False")
+    link(tree, tracked_peak, "Output", output_peak, "True")
+
+    output_peak_age = switch_float_node(nodes, "Peak Age Enabled", (1770, 850), label="Peak Age / Zero")
+    link(tree, group_in, "Peak Hold", output_peak_age, "Switch")
+    set_default(output_peak_age, "False", 0.0)
+    link(tree, tracked_peak_age, "Output", output_peak_age, "True")
+
     store = store_named_attribute_node(
         nodes, "dh_audio_amp", "FLOAT", "POINT",
         location=(570, 340), label="Store Smoothed Amplitude",
@@ -1716,7 +1899,23 @@ def create_temporal_response_group():
     store.name = "Store Smoothed Amplitude"
     link(tree, group_in, "Spectrum", store, "Geometry")
     link(tree, smoothed, "Value", store, "Value")
-    link(tree, store, "Geometry", simulation_out, "Spectrum State")
+
+    store_peak = store_named_attribute_node(
+        nodes, "dh_audio_peak", "FLOAT", "POINT",
+        location=(2050, 520), label="Store Peak",
+    )
+    store_peak.name = "Store Peak"
+    link(tree, store, "Geometry", store_peak, "Geometry")
+    link(tree, output_peak, "Output", store_peak, "Value")
+
+    store_peak_age = store_named_attribute_node(
+        nodes, "dh_audio_peak_age", "FLOAT", "POINT",
+        location=(2240, 520), label="Store Peak Age",
+    )
+    store_peak_age.name = "Store Peak Age"
+    link(tree, store_peak, "Geometry", store_peak_age, "Geometry")
+    link(tree, output_peak_age, "Output", store_peak_age, "Value")
+    link(tree, store_peak_age, "Geometry", simulation_out, "Spectrum State")
 
     output_amp = named_attribute_node(
         nodes, "dh_audio_amp", "FLOAT",
@@ -1724,13 +1923,21 @@ def create_temporal_response_group():
     )
     output_amp.name = "Smoothed Amplitude Output"
 
+    output_peak_attr = named_attribute_node(
+        nodes, "dh_audio_peak", "FLOAT",
+        location=(900, -300), label="Peak Amplitude",
+    )
+    output_peak_attr.name = "Peak Amplitude Output"
+
     link(tree, simulation_out, "Spectrum State", group_out, "Spectrum")
     link(tree, output_amp, "Attribute", group_out, "Amplitude")
+    link(tree, output_peak_attr, "Attribute", group_out, "Peak")
 
     mark_asset(
         tree,
-        "Apply frame-rate-independent attack and release smoothing to "
-        "dh_audio_amp on Analyzer spectrum geometry. Requires sequential "
+        "Apply frame-rate-independent attack/release smoothing and optional peak "
+        "hold/decay to Analyzer spectrum geometry. dh_audio_amp remains the live "
+        "response; dh_audio_peak is a separate held marker. Requires sequential "
         "timeline evaluation or a simulation bake for complete history."
     )
     return tree
@@ -5781,6 +5988,11 @@ def create_material_reader():
         description="Row age values written by DH Audio Spectrum History",
         default_closed=True,
     )
+    temporal_panel = tree.interface.new_panel(
+        name="Temporal Response",
+        description="Peak value written by DH Audio Temporal Response when Peak Hold is enabled",
+        default_closed=True,
+    )
     named_panel = tree.interface.new_panel(
         name="Named Bands",
         description="Named values written by DH Audio Bands",
@@ -5825,6 +6037,14 @@ def create_material_reader():
         )
         material_outputs.append((output_name, attr_name, "history"))
 
+    for output_name, attr_name, _dtype in TEMPORAL_ATTRS:
+        new_socket(
+            tree, output_name, "OUTPUT", "NodeSocketFloat",
+            parent=temporal_panel,
+            description=f"Reads '{attr_name}'",
+        )
+        material_outputs.append((output_name, attr_name, "temporal"))
+
     for output_name, attr_name in NAMED_BAND_ATTRS:
         new_socket(
             tree, output_name, "OUTPUT", "NodeSocketFloat",
@@ -5842,11 +6062,13 @@ def create_material_reader():
     frame_spectrum = make_frame(nodes, "FRAME_SPECTRUM", "SPECTRUM ATTRIBUTE READERS", (-850, 800), 1000)
     frame_stereo = make_frame(nodes, "FRAME_STEREO", "STEREO ATTRIBUTE READERS", (-850, 50), 1000)
     frame_history = make_frame(nodes, "FRAME_HISTORY", "SPECTRUM HISTORY READERS", (-850, -450), 1000)
-    frame_named = make_frame(nodes, "FRAME_NAMED", "NAMED BAND ATTRIBUTE READERS", (-850, -1000), 1000)
+    frame_temporal = make_frame(nodes, "FRAME_TEMPORAL", "TEMPORAL ATTRIBUTE READERS", (-850, -1000), 1000)
+    frame_named = make_frame(nodes, "FRAME_NAMED", "NAMED BAND ATTRIBUTE READERS", (-850, -1350), 1000)
     frames = {
         "spectrum": frame_spectrum,
         "stereo": frame_stereo,
         "history": frame_history,
+        "temporal": frame_temporal,
         "named": frame_named,
     }
     source_inputs = {
@@ -5860,7 +6082,7 @@ def create_material_reader():
         )
         for category, frame in frames.items()
     }
-    local_indices = {"spectrum": 0, "stereo": 0, "history": 0, "named": 0}
+    local_indices = {"spectrum": 0, "stereo": 0, "history": 0, "temporal": 0, "named": 0}
 
     for output_name, attr_name, category in material_outputs:
         local_i = local_indices[category]
@@ -5926,7 +6148,7 @@ def create_material_reader():
 
     mark_asset(
         tree,
-        "Single shader reader for all DH Audio spectrum, stereo, spectrum-history, and named-band attributes. "
+        "Single shader reader for all DH Audio spectrum, stereo, temporal, spectrum-history, and named-band attributes. "
         "Use Source = 0 for geometry/realized data and Source = 1 for GN instance attributes."
     )
     return tree
@@ -7901,9 +8123,10 @@ DH Audio Response
     the built-in audio nodes.
 
 DH Audio Temporal Response
-    Stateful attack/release smoothing for Analyzer spectrum geometry. It
-    replaces dh_audio_amp with a frame-rate-independent exponential response
-    while preserving the carrier topology and all other attributes.
+    Stateful attack/release smoothing for Analyzer spectrum geometry, with an
+    optional held and decaying peak marker. It replaces dh_audio_amp with a
+    frame-rate-independent exponential response and writes dh_audio_peak
+    separately while preserving carrier topology and all other attributes.
 
 DH Audio Spectrum History
     Accumulates positioned Spectrum Points into a bounded waterfall stack.
@@ -8046,10 +8269,15 @@ RECIPE 2B: ATTACK / RELEASE SMOOTHING
 Defaults:
     Attack  = 0.05 seconds
     Release = 0.25 seconds
+    Peak Hold = On
+    Peak Hold Time = 0.20 seconds
+    Peak Decay = 0.50 seconds
 
 Temporal Response smooths dh_audio_amp and preserves every other standard
-spectrum attribute. Set either time to 0 for an immediate response in that
-direction.
+spectrum attribute. Peak Hold writes dh_audio_peak as a held marker that
+decays exponentially toward the live amplitude after its hold time. Set either
+time to 0 for an immediate response in that direction, or disable Peak Hold to
+make the Peak output equal dh_audio_amp.
 
 This group contains a Simulation Zone. Play the timeline sequentially or bake
 the simulation when complete history is required. Jumping directly to an
@@ -8479,6 +8707,7 @@ STANDARD SPECTRUM ATTRIBUTES
 ======================================================================
 
 dh_audio_amp
+dh_audio_peak (Temporal Response only)
 dh_audio_norm
 dh_audio_raw
 dh_audio_band_index

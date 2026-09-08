@@ -2,7 +2,7 @@
 
 **Audio-reactive Geometry Nodes and Shader Nodes for Blender 5.2+**
 
-**Current release:** `3.11.1`
+**Current release:** `3.12.0`
 **Status:** Blender 5.2 release
 
 DH Audio Toolkit is a modular toolkit built around Blender 5.2's **Sample Sound
@@ -11,12 +11,12 @@ instances, materials, and shader controls.
 
 > **Compatibility note:** public node-group names and `dh_audio_*` attributes
 > are compatibility-sensitive. Start with the [quickstart](docs/BETA_QUICKSTART.md)
-> and review the [release notes](docs/RELEASE_NOTES_3.11.1.md).
+> and review the [release notes](docs/RELEASE_NOTES_3.12.0.md).
 
 ## Start here
 
-1. Download `DH-Audio-Toolkit-3.11.1.zip` from the [GitHub Releases](https://github.com/dayhawk-labs/DH-Audio-Toolkit/releases) page.
-2. Extract the folder named `DH Audio Toolkit 3.11.1`.
+1. Download `DH-Audio-Toolkit-3.12.0.zip` from the [GitHub Releases](https://github.com/dayhawk-labs/DH-Audio-Toolkit/releases) page.
+2. Extract the folder named `DH Audio Toolkit 3.12.0`.
 3. Add that extracted folder as a Blender Asset Library.
 4. Load node groups from the **DH Audio** catalog.
 5. Pick a workflow from the [recipe guide](docs/RECIPES.md).
@@ -80,7 +80,7 @@ ANALYZE  →  MAP  →  CONSUME
 | Group | Purpose |
 | --- | --- |
 | **DH Audio Response** | Gain, normalization, clamp, and response shaping for geometry. |
-| **DH Audio Temporal Response** | Frame-rate-independent attack/release smoothing. |
+| **DH Audio Temporal Response** | Frame-rate-independent attack/release smoothing with optional peak hold and decay. |
 | **DH Audio Material Reader** | Reads spectrum, stereo, history, and named-band attributes. |
 | **DH Audio Shader Response** | Material-side response shaping. |
 | **DH Audio Shader Map** | Range mapping, clamping, inversion, and power curves. |
@@ -96,6 +96,10 @@ materials. This lets you swap consumers without rebuilding the analysis stage.
 `dh_audio_amp` · `dh_audio_norm` · `dh_audio_raw` · `dh_audio_band_index` ·
 `dh_audio_band_pos` · `dh_audio_low_hz` · `dh_audio_center_hz` ·
 `dh_audio_high_hz` · `dh_audio_bandwidth_hz`
+
+Temporal Response additionally writes `dh_audio_peak` when its Peak Hold
+control is enabled. It is a held/decaying marker; `dh_audio_amp` remains the
+live attack/release-smoothed amplitude.
 
 ### Stereo attributes
 
@@ -146,7 +150,7 @@ folder is already arranged this way.
 
 - [Recipes and examples](docs/RECIPES.md)
 - [Quickstart](docs/BETA_QUICKSTART.md)
-- [Release notes](docs/RELEASE_NOTES_3.11.1.md)
+- [Release notes](docs/RELEASE_NOTES_3.12.0.md)
 - [Source](src/dh_audio_toolkit.py)
 - [Regression tests](tests/blender_52_regression.py)
 
