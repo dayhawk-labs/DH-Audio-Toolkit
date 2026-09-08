@@ -2603,6 +2603,8 @@ def main():
     }
     print("DH_AUDIO_TOOLKIT_REGRESSION=" + json.dumps(console_result, sort_keys=True))
     if result["summary"]["failed"]:
+        failures = [check for check in result["checks"] if not check["passed"]]
+        print("DH_AUDIO_TOOLKIT_FAILURES=" + json.dumps(failures, sort_keys=True, default=str))
         raise SystemExit(1)
 
 
