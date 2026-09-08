@@ -18,7 +18,7 @@ To create a clean asset-library build after the tests pass:
 & "C:\path\to\Blender 5.2\blender.exe" --background --factory-startup `
   --python tests/blender_52_regression.py -- `
   --report temp/blender_52_report.json `
-  --release "releases/DH Audio Toolkit 3.12.0/DH Audio Toolkit 3.12.0.blend"
+  --release "releases/DH Audio Toolkit 3.13.0/DH Audio Toolkit 3.13.0.blend"
 ```
 
 The release file is rebuilt from `src/dh_audio_toolkit.py`; test node groups,
@@ -50,7 +50,8 @@ The suite checks:
 - Temporal Response attack/release timing, peak hold/decay, zero-time behavior,
   topology-safe previous-band sampling, and metadata preservation;
 - Spectrum History bounded growth, reset, one-frame history, normalized row
-  age, attribute propagation, and changing source topology;
+  age, attribute propagation, changing source topology, and optional connected
+  surface topology with row decimation;
 - Radial Spectrum unique cyclic spacing, exact open-arc endpoints, source
   height/center mapping, audio and spiral radius, cyclic curve closure, and
   one-band safety;

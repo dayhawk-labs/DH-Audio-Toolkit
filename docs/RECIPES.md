@@ -76,9 +76,12 @@ DH Audio Analyzer → DH Audio Spectrum Points → DH Audio Spectrum History
 ```
 
 Spectrum Bars can also feed Spectrum History directly. Defaults are Frames
-`32` and History Offset `(0, -0.15, 0)`. The output contains separate mesh rows;
-it does not connect adjacent frames into one surface. Reset discards previous
-rows in one evaluated frame.
+`32` and History Offset `(0, -0.15, 0)`. **History** contains separate mesh
+rows. Enable the collapsed **Surface** panel to emit a connected quad waterfall
+from the matching **Surface** output. Start with Row Decimation `1`; increase
+it only when a long history needs fewer rows. Surface is disabled by default,
+so existing row workflows are unchanged. Reset discards previous rows in one
+evaluated frame.
 
 ## 6. Radial or spiral spectrum
 

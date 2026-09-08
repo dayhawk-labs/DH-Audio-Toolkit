@@ -160,6 +160,7 @@ EXPECTED_PANELS = {
     "DH Audio Spectrum History": {
         "Source": False,
         "History": False,
+        "Surface": True,
         "Outputs": False,
     },
     "DH Audio Radial Spectrum": {
@@ -1330,7 +1331,7 @@ def _test_temporal_response(report):
 
 
 def _test_spectrum_history(report):
-    def build_host(name, frames, *, reset_frame=None, varying_topology=False, store_outputs=False):
+    def build_host(name, frames, *, reset_frame=None, varying_topology=False, store_outputs=False, surface=False, row_decimation=1):
         tree, _group_in, group_out = _new_geometry_tree(name)
         line = tree.nodes.new("GeometryNodeMeshLine")
         line.mode = "OFFSET"
@@ -1372,6 +1373,8 @@ def _test_spectrum_history(report):
         history = _group_node(tree, "DH Audio Spectrum History")
         _set_input(history, "Frames", frames)
         _set_input(history, "History Offset", (0.0, -1.0, 0.0))
+        _set_input(history, "Surface", surface)
+        _set_input(history, "Row Decimation", row_decimation)
         tree.links.new(_socket(band_index.outputs, "Geometry"), _socket(history.inputs, "Spectrum Points"))
 
         if reset_frame is not None:
@@ -1382,7 +1385,7 @@ def _test_spectrum_history(report):
             tree.links.new(_socket(scene_time.outputs, "Frame"), _socket(reset.inputs, "A"))
             tree.links.new(_socket(reset.outputs, "Result"), _socket(history.inputs, "Reset"))
 
-        geometry = _socket(history.outputs, "History")
+        geometry = _socket(history.outputs, "Surface" if surface else "History")
         if store_outputs:
             output_index = _store_attribute(
                 tree,
@@ -1523,11 +1526,41 @@ def _test_spectrum_history(report):
         ),
     )
 
+    surface_obj = build_host("DH Test Connected Waterfall", 4, surface=True)
+    surface = {frame: _snapshot(surface_obj, frame) for frame in range(1, 5)}
+    surface_attrs_ok = all(
+        all(name in snapshot["attributes"] for name in (*SPECTRUM_ATTRIBUTES, *HISTORY_ATTRIBUTES))
+        for snapshot in surface.values()
+    )
+    surface_ok = (
+        len(surface[1]["vertices"]) == 3
+        and surface[1]["faces"] == 0
+        and len(surface[4]["vertices"]) == 12
+        and surface[4]["faces"] == 6
+        and surface_attrs_ok
+    )
+    report.check(
+        "Spectrum History optional surface connects retained rows and preserves attributes",
+        surface_ok,
+        {frame: {"vertices": len(snapshot["vertices"]), "faces": snapshot["faces"]} for frame, snapshot in surface.items()},
+    )
+
+    decimated_surface_obj = build_host(
+        "DH Test Decimated Waterfall", 4, surface=True, row_decimation=2
+    )
+    decimated_surface = _snapshot(decimated_surface_obj, 4)
+    report.check(
+        "Spectrum History surface row decimation reduces connected rows",
+        len(decimated_surface["vertices"]) == 6 and decimated_surface["faces"] == 2,
+        {"vertices": len(decimated_surface["vertices"]), "faces": decimated_surface["faces"]},
+    )
+
     report.observations["spectrum_history"] = {
         "frames": 4,
         "offset": [0.0, -1.0, 0.0],
         "frame_vertex_counts": {frame: len(snapshot["vertices"]) for frame, snapshot in snapshots.items()},
         "varying_topology_vertex_counts": {frame: len(snapshot["vertices"]) for frame, snapshot in varying.items()},
+        "surface_frame_4": {"vertices": len(surface[4]["vertices"]), "faces": surface[4]["faces"]},
         "timeline_requirement": "Play sequentially or bake/cache; an uncached forward jump advances one simulation step.",
     }
 

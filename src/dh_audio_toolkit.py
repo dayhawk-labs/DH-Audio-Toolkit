@@ -4,8 +4,13 @@ import os
 from pathlib import Path
 
 # =====================================================================
-# DH AUDIO TOOLKIT 3.12.0
+# DH AUDIO TOOLKIT 3.13.0
 # Blender 5.2+
+#
+# 3.13.0:
+# - Added optional connected waterfall surface output to DH Audio Spectrum
+#   History. It samples the bounded retained rows onto a quad grid while
+#   preserving the existing point-row History output.
 #
 # 3.12.0:
 # - Added optional Peak Hold + Decay to DH Audio Temporal Response. The live
@@ -1972,6 +1977,11 @@ def create_spectrum_history():
         description="Bounded simulation history and row spacing",
         default_closed=False,
     )
+    surface_panel = tree.interface.new_panel(
+        name="Surface",
+        description="Optional connected mesh from retained spectrum rows",
+        default_closed=True,
+    )
     outputs_panel = tree.interface.new_panel(
         name="Outputs",
         description="History geometry and normalized row-age fields",
@@ -2010,9 +2020,30 @@ def create_spectrum_history():
         structure_type="SINGLE",
     )
     new_socket(
+        tree, "Surface", "INPUT", "NodeSocketBool",
+        parent=surface_panel,
+        default=False,
+        description="Build a connected quad surface from the retained history rows",
+        structure_type="SINGLE",
+    )
+    new_socket(
+        tree, "Row Decimation", "INPUT", "NodeSocketInt",
+        parent=surface_panel,
+        default=1,
+        min_value=1,
+        max_value=64,
+        description="Use every Nth history row in the connected surface",
+        structure_type="SINGLE",
+    )
+    new_socket(
         tree, "History", "OUTPUT", "NodeSocketGeometry",
         parent=outputs_panel,
         description="Current spectrum plus bounded previous rows",
+    )
+    new_socket(
+        tree, "Surface", "OUTPUT", "NodeSocketGeometry",
+        parent=outputs_panel,
+        description="Optional connected waterfall mesh; disabled by default",
     )
     new_socket(
         tree, "History Index", "OUTPUT", "NodeSocketInt",
@@ -2034,7 +2065,7 @@ def create_spectrum_history():
     group_in.width = 220
 
     group_out = nodes.new("NodeGroupOutput")
-    group_out.location = (1260, 20)
+    group_out.location = (2580, 20)
     group_out.width = 240
     group_out.is_active_output = True
 
@@ -2202,15 +2233,175 @@ def create_spectrum_history():
     )
     output_position.name = "History Position Output"
 
+    # Build the optional mesh only from the stored simulation output.  A Mesh
+    # Grid gives deterministic quads and its Y-first index order lets each
+    # vertex map directly to one retained history row and spectrum band.
+    history_size = nodes.new("GeometryNodeAttributeDomainSize")
+    history_size.name = "Current Spectrum Band Count"
+    history_size.label = "Current Spectrum Band Count"
+    history_size.component = "MESH"
+    history_size.location = (1180, 620)
+    link(tree, group_in, "Spectrum Points", history_size, "Geometry")
+
+    safe_band_count = integer_math_node(
+        nodes, "Safe Surface Band Count", "MAXIMUM", (1400, 620),
+        label="Max(Bands, 2)"
+    )
+    set_default(safe_band_count, 1, 2)
+    link(tree, history_size, "Point Count", safe_band_count, 0)
+
+    surface_age = named_attribute_node(
+        nodes, "dh_audio_history_index", "INT",
+        location=(1180, 430), label="Surface History Age",
+    )
+    surface_age.name = "Surface History Age"
+
+    age_stats = nodes.new("GeometryNodeAttributeStatistic")
+    age_stats.name = "Surface Oldest Row"
+    age_stats.label = "Surface Oldest Row"
+    age_stats.data_type = "INT"
+    age_stats.domain = "POINT"
+    age_stats.location = (1400, 430)
+    age_stats.width = 210
+    link(tree, simulation_out, "History State", age_stats, "Geometry")
+    link(tree, surface_age, "Attribute", age_stats, "Attribute")
+
+    surface_row_count = integer_math_node(
+        nodes, "Surface Row Count", "DIVIDE_FLOOR", (1640, 430),
+        label="Oldest Row / Decimation"
+    )
+    link(tree, age_stats, "Max", surface_row_count, 0)
+    link(tree, group_in, "Row Decimation", surface_row_count, 1)
+
+    surface_row_count_plus_one = integer_math_node(
+        nodes, "Surface Row Count + 1", "ADD", (1850, 430),
+        label="Surface Rows"
+    )
+    set_default(surface_row_count_plus_one, 1, 1)
+    link(tree, surface_row_count, "Value", surface_row_count_plus_one, 0)
+
+    surface_grid = nodes.new("GeometryNodeMeshGrid")
+    surface_grid.name = "Connected Waterfall Grid"
+    surface_grid.label = "Connected Waterfall Grid"
+    surface_grid.location = (2070, 570)
+    surface_grid.width = 220
+    set_default(surface_grid, "Size X", 1.0)
+    set_default(surface_grid, "Size Y", 1.0)
+    link(tree, safe_band_count, "Value", surface_grid, "Vertices X")
+    link(tree, surface_row_count_plus_one, "Value", surface_grid, "Vertices Y")
+
+    surface_grid_index = nodes.new("GeometryNodeInputIndex")
+    surface_grid_index.name = "Surface Grid Index"
+    surface_grid_index.location = (1850, 220)
+
+    surface_band_index = integer_math_node(
+        nodes, "Surface Band Index", "DIVIDE_FLOOR", (2070, 220),
+        label="Grid Index // Rows"
+    )
+    link(tree, surface_grid_index, "Index", surface_band_index, 0)
+    link(tree, surface_row_count_plus_one, "Value", surface_band_index, 1)
+
+    surface_row_index = integer_math_node(
+        nodes, "Surface Row Index", "MODULO", (2070, 80),
+        label="Grid Index % Rows"
+    )
+    link(tree, surface_grid_index, "Index", surface_row_index, 0)
+    link(tree, surface_row_count_plus_one, "Value", surface_row_index, 1)
+
+    sampled_age = integer_math_node(
+        nodes, "Sampled Surface Age", "MULTIPLY", (2290, 80),
+        label="Row Index * Decimation"
+    )
+    link(tree, surface_row_index, "Value", sampled_age, 0)
+    link(tree, group_in, "Row Decimation", sampled_age, 1)
+
+    source_row_offset = integer_math_node(
+        nodes, "Surface Source Row Offset", "MULTIPLY", (2290, 220),
+        label="Sampled Age * Bands"
+    )
+    link(tree, sampled_age, "Value", source_row_offset, 0)
+    # Use the real current row width for sampling. The grid may use a minimum
+    # of two vertices for a one-band source, but its duplicated column must
+    # still read the single source band rather than skip into the next row.
+    link(tree, history_size, "Point Count", source_row_offset, 1)
+
+    source_index = integer_math_node(
+        nodes, "Surface Source Index", "ADD", (2510, 220),
+        label="Row Offset + Band"
+    )
+    link(tree, source_row_offset, "Value", source_index, 0)
+    link(tree, surface_band_index, "Value", source_index, 1)
+
+    history_position = nodes.new("GeometryNodeInputPosition")
+    history_position.name = "History Surface Position"
+    history_position.location = (2290, -150)
+    sample_position = nodes.new("GeometryNodeSampleIndex")
+    sample_position.name = "Sample History Position"
+    sample_position.label = "Sample History Position"
+    sample_position.data_type = "FLOAT_VECTOR"
+    sample_position.domain = "POINT"
+    sample_position.clamp = True
+    sample_position.location = (2510, -150)
+    sample_position.width = 220
+    link(tree, simulation_out, "History State", sample_position, "Geometry")
+    link(tree, history_position, "Position", sample_position, "Value")
+    link(tree, source_index, "Value", sample_position, "Index")
+
+    shape_surface = nodes.new("GeometryNodeSetPosition")
+    shape_surface.name = "Shape Connected Waterfall"
+    shape_surface.label = "Shape Connected Waterfall"
+    shape_surface.location = (2730, 570)
+    shape_surface.width = 230
+    link(tree, surface_grid, "Mesh", shape_surface, "Geometry")
+    link(tree, sample_position, "Value", shape_surface, "Position")
+
+    # Retain the stable history and spectrum schema on the surface, so it can
+    # use the same material and downstream geometry consumers as History.
+    surface_geometry = shape_surface
+    attr_x, attr_y = 2730, 230
+    for i, (_label, attr_name, data_type) in enumerate((*SPECTRUM_ATTRS, *HISTORY_ATTRS)):
+        attr = named_attribute_node(
+            nodes, attr_name, data_type,
+            location=(attr_x, attr_y - i * 145), label=f"Surface {attr_name}",
+        )
+        sample = nodes.new("GeometryNodeSampleIndex")
+        sample.name = f"Sample Surface {attr_name}"
+        sample.label = f"Sample {attr_name}"
+        sample.data_type = data_type
+        sample.domain = "POINT"
+        sample.clamp = True
+        sample.location = (2940, attr_y - i * 145)
+        sample.width = 210
+        link(tree, simulation_out, "History State", sample, "Geometry")
+        link(tree, attr, "Attribute", sample, "Value")
+        link(tree, source_index, "Value", sample, "Index")
+        store = store_named_attribute_node(
+            nodes, attr_name, data_type, "POINT",
+            location=(3170, attr_y - i * 145), label=f"Store {attr_name}",
+        )
+        store.name = f"Store Surface {attr_name}"
+        link(tree, surface_geometry, "Geometry", store, "Geometry")
+        link(tree, sample, "Value", store, "Value")
+        surface_geometry = store
+
+    surface_switch = switch_geometry_node(
+        nodes, "Enable Surface", (3440, 570), label="Optional Surface"
+    )
+    link(tree, group_in, "Surface", surface_switch, "Switch")
+    link(tree, empty_state, "Geometry", surface_switch, "False")
+    link(tree, surface_geometry, "Geometry", surface_switch, "True")
+
     link(tree, simulation_out, "History State", group_out, "History")
+    link(tree, surface_switch, "Output", group_out, "Surface")
     link(tree, output_index, "Attribute", group_out, "History Index")
     link(tree, output_position, "Attribute", group_out, "History Position")
 
     mark_asset(
         tree,
         "Accumulate positioned spectrum points into a bounded waterfall history. "
-        "Preserves spectrum attributes, supports changing band counts and reset, "
-        "and exposes dh_audio_history_index / dh_audio_history_pos. Requires "
+        "Optionally generates a decimated connected quad surface, preserves spectrum "
+        "attributes, supports changing band counts and reset, and exposes "
+        "dh_audio_history_index / dh_audio_history_pos. Requires "
         "sequential timeline evaluation or a simulation bake for complete history."
     )
     return tree
