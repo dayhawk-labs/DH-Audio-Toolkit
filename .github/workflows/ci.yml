@@ -166,8 +166,18 @@ jobs:
             --release "releases/DH Audio Toolkit ${version}/DH Audio Toolkit ${version}.blend"
           python tools/check_consistency.py --require-release
           sed "s/{{VERSION}}/${version}/g" docs/ASSET_LIBRARY_INSTALL.md > "releases/DH Audio Toolkit ${version}/README.md"
+          # Blender may leave .blend1/.blend2 recovery files beside the release.
+          # They are useful locally but must never ship as distributable assets.
+          find "releases/DH Audio Toolkit ${version}" -type f \
+            \( -name '*.blend[0-9]' -o -name '*.blend[0-9][0-9]' \) \
+            -print -delete
           mkdir -p dist
           (cd releases && zip -r "../dist/DH-Audio-Toolkit-${version}.zip" "DH Audio Toolkit ${version}")
+          if unzip -Z1 "dist/DH-Audio-Toolkit-${version}.zip" | \
+            grep -Eq '\.blend[0-9]+$'; then
+            echo "ERROR: Blender backup file found in release ZIP"
+            exit 1
+          fi
 
       - name: Publish GitHub Release
         env:
@@ -176,10 +186,15 @@ jobs:
         run: |
           version="$(tr -d '\r\n' < VERSION)"
           tag="v${version}"
-          gh release create "$tag" \
+          if ! gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$tag" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "DH Audio Toolkit ${version}" \
+              --notes-file "docs/RELEASE_NOTES_${version}.md"
+          fi
+          gh release upload "$tag" \
             "dist/DH-Audio-Toolkit-${version}.zip" \
             "releases/DH Audio Toolkit ${version}/DH Audio Toolkit ${version}.blend" \
             "releases/DH Audio Toolkit ${version}/blender_assets.cats.txt" \
             --repo "$GITHUB_REPOSITORY" \
-            --title "DH Audio Toolkit ${version}" \
-            --notes-file "docs/RELEASE_NOTES_${version}.md"
+            --clobber
