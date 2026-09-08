@@ -4,6 +4,13 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: "Source branch or tag to generate from"
+        required: false
+        default: "main"
+        type: string
 
 permissions:
   contents: read
@@ -50,3 +57,70 @@ jobs:
 
       - name: Run Blender regression suite
         run: blender --background --python tests/blender_52_regression.py
+
+  generate-assets:
+    name: Generate Blender release assets
+    if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main') }}
+    needs: [static]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    concurrency:
+      group: generated-assets
+      cancel-in-progress: false
+    permissions:
+      contents: write
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          path: source
+          ref: ${{ inputs.source_ref || 'main' }}
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Set up Blender 5.2
+        uses: BradyAJohnston/setup-blender@v5.1.0
+        with:
+          version: '5.2.0'
+
+      - name: Generate and validate release
+        working-directory: source
+        shell: bash
+        run: |
+          version="$(tr -d '\r\n' < VERSION)"
+          mkdir -p releases temp
+          blender --background --factory-startup \
+            --python tests/blender_52_regression.py -- \
+            --report "temp/blender_52_release_report.json" \
+            --release "releases/DH Audio Toolkit ${version}.blend"
+          python tools/check_consistency.py --require-release
+
+      - name: Check out generated-assets branch
+        uses: actions/checkout@v4
+        with:
+          ref: generated-assets
+          path: generated
+          fetch-depth: 0
+
+      - name: Publish generated files to branch
+        shell: bash
+        run: |
+          version="$(tr -d '\r\n' < source/VERSION)"
+          mkdir -p "generated/releases"
+          cp "source/releases/DH Audio Toolkit ${version}.blend" "generated/releases/"
+          cp source/releases/blender_assets.cats.txt generated/releases/
+          cp "source/docs/RELEASE_NOTES_${version}.md" generated/docs/ 2>/dev/null || true
+          cd generated
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add releases docs
+          if git diff --cached --quiet; then
+            echo "Generated assets are already current."
+            exit 0
+          fi
+          git commit -m "build: generate Blender ${version} assets"
+          git push origin HEAD:generated-assets

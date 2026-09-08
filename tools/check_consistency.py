@@ -59,7 +59,7 @@ def groups(path: Path, kind: str) -> dict[str, int]:
     return result
 
 
-def check(root: Path) -> list[str]:
+def check(root: Path, *, require_release: bool = False) -> list[str]:
     required = {
         "source": root / "src/dh_audio_toolkit.py",
         "tests": root / "tests/blender_52_regression.py",
@@ -86,9 +86,10 @@ def check(root: Path) -> list[str]:
         expected_release_note = root / "docs" / f"RELEASE_NOTES_{expected}.md"
         if not expected_release_note.is_file():
             errors.append(f"MISSING_CURRENT_RELEASE_NOTE: {expected_release_note.relative_to(root)}")
-        expected_blend = root / "releases" / f"DH Audio Toolkit {expected}.blend"
-        if not expected_blend.is_file():
-            errors.append(f"MISSING_CURRENT_RELEASE: {expected_blend.relative_to(root)}")
+        if require_release:
+            expected_blend = root / "releases" / f"DH Audio Toolkit {expected}.blend"
+            if not expected_blend.is_file():
+                errors.append(f"MISSING_CURRENT_RELEASE: {expected_blend.relative_to(root)}")
 
     inventories = {kind: groups(path, kind) for kind, path in required.items() if kind != "validation"}
     authoritative = inventories["tests"]
@@ -107,8 +108,13 @@ def check(root: Path) -> list[str]:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parents[1])
+    parser.add_argument(
+        "--require-release",
+        action="store_true",
+        help="require the current generated .blend release artifact",
+    )
     args = parser.parse_args()
-    errors = check(args.root.resolve())
+    errors = check(args.root.resolve(), require_release=args.require_release)
     if errors:
         print("\n".join(errors), file=sys.stderr)
         return 1

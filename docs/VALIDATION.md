@@ -25,6 +25,15 @@ The release file is rebuilt from `src/dh_audio_toolkit.py`; test node groups,
 objects, and the generated WAV are not saved into it. The generator writes the
 stable `blender_assets.cats.txt` sidecar beside the `.blend`.
 
+## Generated-assets branch
+
+The `generated-assets` branch contains the latest validated `.blend` release
+and catalog sidecar for convenient download and local testing. The GitHub
+Actions **Generate Blender release assets** job rebuilds them from `main` on
+pushes to `main` and can also be started manually with a source branch or tag.
+Generated binaries are intentionally kept off `main`; source and tests remain
+the canonical development surface there.
+
 The suite checks:
 
 - clean and repeated rebuild determinism;
