@@ -37,7 +37,6 @@ def prepare(args):
                 space = area.spaces.active
                 space.tree_type = "GeometryNodeTree"
                 space.pin = True
-                space.geometry_nodes_type = "MODIFIER"
                 space.node_tree = tree
                 region = next(r for r in area.regions if r.type == "WINDOW")
                 with bpy.context.temp_override(window=window, area=area, region=region):
