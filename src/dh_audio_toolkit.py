@@ -1,6 +1,7 @@
 import bpy
 import re
 import os
+from pathlib import Path
 
 # =====================================================================
 # DH AUDIO TOOLKIT 3.11
