@@ -35,11 +35,18 @@ def groups(path: Path, kind: str) -> dict[str, int]:
         elif kind == "tests" and "PUBLIC_GROUPS" in "".join(lines(path)[:number]):
             match = re.search(r'"(DH Audio [^"]+)"\s*:', line)
         elif kind == "readme":
-            match = re.match(r"^\s*(DH Audio [A-Z][A-Za-z]+(?: [A-Z][A-Za-z]+)*)\s*$", line)
+            match = re.search(
+                r"\*\*(DH Audio [A-Z][A-Za-z]+(?: [A-Z][A-Za-z]+)*)\*\*",
+                line,
+            )
+            if not match:
+                match = re.fullmatch(
+                    r"\s*(DH Audio [A-Z][A-Za-z]+(?: [A-Z][A-Za-z]+)*)\s*", line
+                )
         else:
             match = None
         if match:
-            name = match.group(1) if kind == "tests" else match.group(0)
+            name = match.group(1) if kind in {"tests", "readme"} else match.group(0)
             result[name] = number
     return result
 
