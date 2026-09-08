@@ -15,17 +15,21 @@ instances, materials, and shader controls.
 
 ## Start here
 
-1. Download the [DH Audio Toolkit 3.11 release folder](releases/DH%20Audio%20Toolkit%203.11/).
-2. Put that folder directly in a Blender Asset Library folder.
-3. Load the node groups from the **DH Audio** asset catalog.
-4. Pick a workflow from the [recipe guide](docs/RECIPES.md).
+1. Download `DH-Audio-Toolkit-3.11.zip` from the [GitHub Releases](https://github.com/dayhawk-labs/DH-Audio-Toolkit/releases) page.
+2. Extract the folder named `DH Audio Toolkit 3.11`.
+3. Add that extracted folder as a Blender Asset Library.
+4. Load node groups from the **DH Audio** catalog.
+5. Pick a workflow from the [recipe guide](docs/RECIPES.md).
+
+See the [beginner installation guide](docs/ASSET_LIBRARY_INSTALL.md) for
+step-by-step Blender instructions.
 
 You do not need to run the Python generator to use the released asset. The
 generator and tests remain available for development and custom rebuilds.
 
-For a portable asset release, share the complete versioned release folder.
-It contains the `.blend` file and its `blender_assets.cats.txt` sidecar in the
-layout Blender expects.
+For a portable asset release, share the complete versioned folder extracted
+from the ZIP. It contains the `.blend` file, catalog sidecar, and installation
+guide together.
 
 ## The toolkit in one diagram
 
@@ -123,7 +127,8 @@ DH Audio / Shaders
 ```
 
 Keep the catalog file beside the `.blend` when sharing or moving the asset
-library. The UUIDs are intended to remain stable across releases.
+library. The UUIDs are intended to remain stable across releases. The packaged
+folder is already arranged this way.
 
 ## Design notes
 

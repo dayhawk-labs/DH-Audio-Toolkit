@@ -3,6 +3,7 @@ name: CI
 on:
   push:
     branches: [main]
+    tags: ['v*']
   pull_request:
   workflow_dispatch:
     inputs:
@@ -11,6 +12,11 @@ on:
         required: false
         default: "main"
         type: string
+      publish_release:
+        description: "Create a GitHub Release from source_ref"
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -60,7 +66,7 @@ jobs:
 
   generate-assets:
     name: Generate Blender release assets
-    if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main') }}
+    if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))) }}
     needs: [static]
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -74,7 +80,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           path: source
-          ref: ${{ inputs.source_ref || 'main' }}
+          ref: ${{ inputs.source_ref || github.ref }}
           fetch-depth: 0
 
       - name: Set up Python
@@ -98,22 +104,6 @@ jobs:
             --report "temp/blender_52_release_report.json" \
             --release "releases/DH Audio Toolkit ${version}/DH Audio Toolkit ${version}.blend"
           python tools/check_consistency.py --require-release
-
-      - name: Publish current release to main
-        if: ${{ (inputs.source_ref || 'main') == 'main' }}
-        working-directory: source
-        shell: bash
-        run: |
-          version="$(tr -d '\r\n' < VERSION)"
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add "releases/DH Audio Toolkit ${version}"
-          if git diff --cached --quiet; then
-            echo "Main already contains the current release asset."
-            exit 0
-          fi
-          git commit -m "build: publish Blender ${version} asset [skip ci]"
-          git push origin HEAD:main
 
       - name: Check out generated-assets branch
         uses: actions/checkout@v4
@@ -142,3 +132,54 @@ jobs:
           fi
           git commit -m "build: generate Blender ${version} assets"
           git push origin HEAD:generated-assets
+
+  package-release:
+    name: Package GitHub Release
+    if: ${{ startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch' && inputs.publish_release == true }}
+    needs: [static, generate-assets]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_ref || github.ref }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Set up Blender 5.2
+        uses: BradyAJohnston/setup-blender@v5.1.0
+        with:
+          version: '5.2.0'
+
+      - name: Generate release bundle
+        shell: bash
+        run: |
+          version="$(tr -d '\r\n' < VERSION)"
+          blender --background --factory-startup \
+            --python tests/blender_52_regression.py -- \
+            --release "releases/DH Audio Toolkit ${version}/DH Audio Toolkit ${version}.blend"
+          python tools/check_consistency.py --require-release
+          sed "s/{{VERSION}}/${version}/g" docs/ASSET_LIBRARY_INSTALL.md > "releases/DH Audio Toolkit ${version}/README.md"
+          mkdir -p dist
+          (cd releases && zip -r "../dist/DH-Audio-Toolkit-${version}.zip" "DH Audio Toolkit ${version}")
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          version="$(tr -d '\r\n' < VERSION)"
+          tag="v${version}"
+          gh release create "$tag" \
+            "dist/DH-Audio-Toolkit-${version}.zip" \
+            "releases/DH Audio Toolkit ${version}/DH Audio Toolkit ${version}.blend" \
+            "releases/DH Audio Toolkit ${version}/blender_assets.cats.txt" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "DH Audio Toolkit ${version}" \
+            --notes-file "docs/RELEASE_NOTES_${version}.md"
