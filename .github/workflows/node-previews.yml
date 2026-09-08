@@ -1,0 +1,74 @@
+name: Public node previews
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: "Branch or tag to preview"
+        required: false
+        default: "main"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out DH Audio Toolkit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_ref }}
+
+      - name: Check out preview tool
+        uses: actions/checkout@v4
+        with:
+          repository: dayhawk-labs/blender-node-previews
+          ref: main
+          path: blender-node-previews
+          token: ${{ secrets.BLENDER_NODE_PREVIEWS_TOKEN }}
+
+      - name: Set up Blender 5.2
+        uses: BradyAJohnston/setup-blender@v5.1.0
+        with:
+          version: '5.2.0'
+
+      - name: Build source blend
+        shell: bash
+        run: |
+          version="$(tr -d '\r\n' < VERSION)"
+          mkdir -p temp
+          blender --background --factory-startup \
+            --python tests/blender_52_regression.py -- \
+            --release "temp/DH Audio Toolkit ${version}.blend"
+
+      - name: Capture approved exterior nodes
+        shell: bash
+        env:
+          BLENDER: blender
+          MANIFEST: ${{ github.workspace }}/tools/public_node_previews.json
+        run: |
+          version="$(tr -d '\r\n' < VERSION)"
+          export BLEND_FILE="${GITHUB_WORKSPACE}/temp/DH Audio Toolkit ${version}.blend"
+          mkdir -p temp/public-node-previews
+          while IFS=$'\t' read -r group filename; do
+            GROUP="$group" \
+            OUTPUT="${GITHUB_WORKSPACE}/temp/public-node-previews/${filename}" \
+            MANIFEST="$MANIFEST" BLEND_FILE="$BLEND_FILE" BLENDER="$BLENDER" \
+              bash blender-node-previews/examples/capture-one.sh
+          done < <(python3 - <<'PY'
+          import json
+          from pathlib import Path
+          data = json.loads(Path("tools/public_node_previews.json").read_text())
+          for group in data["groups"]:
+              print(f"{group}\t{data['files'][group]}")
+          PY
+          )
+
+      - name: Upload public node previews
+        uses: actions/upload-artifact@v4
+        with:
+          name: dh-audio-toolkit-public-node-previews
+          path: temp/public-node-previews/*.png

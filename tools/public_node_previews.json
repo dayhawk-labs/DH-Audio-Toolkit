@@ -1,0 +1,22 @@
+{
+  "groups": {
+    "analyzer": "DH Audio Analyzer",
+    "temporal_response": "DH Audio Temporal Response",
+    "spectrum_history": "DH Audio Spectrum History",
+    "material_reader": "DH Audio Material Reader",
+    "spectrum_bars": "DH Audio Spectrum Bars",
+    "spectrum_curve": "DH Audio Spectrum Curve",
+    "radial_spectrum": "DH Audio Radial Spectrum",
+    "mesh_deform": "DH Audio Mesh Deform"
+  },
+  "files": {
+    "analyzer": "dh-audio-analyzer.png",
+    "temporal_response": "dh-audio-temporal-response.png",
+    "spectrum_history": "dh-audio-spectrum-history.png",
+    "material_reader": "dh-audio-material-reader.png",
+    "spectrum_bars": "dh-audio-spectrum-bars.png",
+    "spectrum_curve": "dh-audio-spectrum-curve.png",
+    "radial_spectrum": "dh-audio-radial-spectrum.png",
+    "mesh_deform": "dh-audio-mesh-deform.png"
+  }
+}
