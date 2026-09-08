@@ -141,7 +141,7 @@ jobs:
                 wait "$blender_pid" || true
                 echo "Timed out waiting for Blender Node Editor" >&2
                 exit 1
-              ' _ "$group" "$ready" "$output" || true
+              ' _ "$group" "$ready" "$output"
             if [[ ! -s "$output" ]]; then
               echo "Screenshot was not created: $output" >&2
               exit 1
