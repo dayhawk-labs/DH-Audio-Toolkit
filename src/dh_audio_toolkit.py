@@ -1790,13 +1790,23 @@ def create_temporal_response_group():
     link(tree, sample_previous, "Value", smoothed, 0)
     link(tree, scaled_delta, "Value", smoothed, 1)
 
+    # Peak logic executes after the live amplitude store below. Read that
+    # stored value instead of reusing ``smoothed``: fields are evaluated in the
+    # consuming geometry context, where reusing the expression would sample
+    # the already-smoothed dh_audio_amp and apply a second smoothing pass.
+    stored_live_amp = named_attribute_node(
+        nodes, "dh_audio_amp", "FLOAT",
+        location=(1580, 330), label="Stored Live Amplitude",
+    )
+    stored_live_amp.name = "Stored Live Amplitude"
+
     peak_rising = nodes.new("FunctionNodeCompare")
     peak_rising.name = "Peak Rising"
     peak_rising.label = "Live Amplitude > Previous Peak"
     peak_rising.data_type = "FLOAT"
     peak_rising.operation = "GREATER_THAN"
     peak_rising.location = (320, 640)
-    link(tree, smoothed, "Value", peak_rising, "A")
+    link(tree, stored_live_amp, "Attribute", peak_rising, "A")
     link(tree, sample_previous_peak, "Value", peak_rising, "B")
 
     peak_age = math_node(
@@ -1846,7 +1856,7 @@ def create_temporal_response_group():
     peak_delta = math_node(
         nodes, "Peak Delta", "SUBTRACT", (820, 520), label="Live - Previous Peak"
     )
-    link(tree, smoothed, "Value", peak_delta, 0)
+    link(tree, stored_live_amp, "Attribute", peak_delta, 0)
     link(tree, sample_previous_peak, "Value", peak_delta, 1)
 
     scaled_peak_delta = math_node(
@@ -1864,7 +1874,7 @@ def create_temporal_response_group():
     peak_floor = math_node(
         nodes, "Peak Floor", "MAXIMUM", (1390, 520), label="Max(Live, Decayed Peak)"
     )
-    link(tree, smoothed, "Value", peak_floor, 0)
+    link(tree, stored_live_amp, "Attribute", peak_floor, 0)
     link(tree, decayed_peak, "Value", peak_floor, 1)
 
     held_peak = switch_float_node(nodes, "Peak Hold Switch", (1390, 680), label="Hold / Decay")
@@ -1875,7 +1885,7 @@ def create_temporal_response_group():
     tracked_peak = switch_float_node(nodes, "Peak Rise Switch", (1580, 680), label="New Peak / Prior Peak")
     link(tree, peak_rising, "Result", tracked_peak, "Switch")
     link(tree, held_peak, "Output", tracked_peak, "False")
-    link(tree, smoothed, "Value", tracked_peak, "True")
+    link(tree, stored_live_amp, "Attribute", tracked_peak, "True")
 
     tracked_peak_age = switch_float_node(nodes, "Peak Age Reset", (1580, 850), label="Reset Age on New Peak")
     link(tree, peak_rising, "Result", tracked_peak_age, "Switch")
@@ -1884,7 +1894,7 @@ def create_temporal_response_group():
 
     output_peak = switch_float_node(nodes, "Peak Hold Enabled", (1770, 680), label="Peak / Live Amplitude")
     link(tree, group_in, "Peak Hold", output_peak, "Switch")
-    link(tree, smoothed, "Value", output_peak, "False")
+    link(tree, stored_live_amp, "Attribute", output_peak, "False")
     link(tree, tracked_peak, "Output", output_peak, "True")
 
     output_peak_age = switch_float_node(nodes, "Peak Age Enabled", (1770, 850), label="Peak Age / Zero")
