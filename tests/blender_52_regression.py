@@ -1548,6 +1548,10 @@ def _test_spectrum_history(report):
     decimated_surface_obj = build_host(
         "DH Test Decimated Waterfall", 4, surface=True, row_decimation=2
     )
+    # Spectrum History is a Simulation Zone: evaluate the preceding timeline
+    # frames before inspecting the retained, decimated surface at frame 4.
+    for frame in range(1, 4):
+        _snapshot(decimated_surface_obj, frame)
     decimated_surface = _snapshot(decimated_surface_obj, 4)
     report.check(
         "Spectrum History surface row decimation reduces connected rows",
