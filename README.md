@@ -2,23 +2,27 @@
 
 **Audio-reactive Geometry Nodes and Shader Nodes for Blender 5.2+**
 
-**Current release:** `3.11.0-beta.1`
-**Status:** peer beta
+**Current release:** `3.11`
+**Status:** Blender 5.2 release
 
 DH Audio Toolkit is a modular toolkit built around Blender 5.2's **Sample Sound
 Frequencies** node. It turns audio into reusable spectrum data, geometry,
 instances, materials, and shader controls.
 
-> **Beta note:** public node-group names and `dh_audio_*` attributes are
-> compatibility-sensitive. Start with the [beta quickstart](docs/BETA_QUICKSTART.md)
-> and review the [release notes](docs/RELEASE_NOTES_3.11.0-beta.1.md).
+> **Compatibility note:** public node-group names and `dh_audio_*` attributes
+> are compatibility-sensitive. Start with the [quickstart](docs/BETA_QUICKSTART.md)
+> and review the [release notes](docs/RELEASE_NOTES_3.11.md).
 
 ## Start here
 
-1. Open Blender 5.2 or newer.
-2. Run the generator in `src/dh_audio_toolkit.py`.
-3. Load the generated node groups from the **DH Audio** asset catalog.
+1. Download the [DH Audio Toolkit 3.11 Blender file](releases/DH%20Audio%20Toolkit%203.11.blend)
+   and [catalog sidecar](releases/blender_assets.cats.txt).
+2. Put both files in the same Blender Asset Library folder.
+3. Load the node groups from the **DH Audio** asset catalog.
 4. Pick a workflow from the [recipe guide](docs/RECIPES.md).
+
+You do not need to run the Python generator to use the released asset. The
+generator and tests remain available for development and custom rebuilds.
 
 For a portable asset release, share the `.blend` file and its
 `blender_assets.cats.txt` file in the same asset-library folder.
@@ -136,8 +140,8 @@ library. The UUIDs are intended to remain stable across releases.
 ## Further documentation
 
 - [Recipes and examples](docs/RECIPES.md)
-- [Beta quickstart](docs/BETA_QUICKSTART.md)
-- [Release notes](docs/RELEASE_NOTES_3.11.0-beta.1.md)
+- [Quickstart](docs/BETA_QUICKSTART.md)
+- [Release notes](docs/RELEASE_NOTES_3.11.md)
 - [Source](src/dh_audio_toolkit.py)
 - [Regression tests](tests/blender_52_regression.py)
 

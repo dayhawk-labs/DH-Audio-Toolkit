@@ -18,7 +18,7 @@ To create a clean asset-library build after the tests pass:
 & "C:\path\to\Blender 5.2\blender.exe" --background --factory-startup `
   --python tests/blender_52_regression.py -- `
   --report temp/blender_52_report.json `
-  --release "releases/DH Audio Toolkit 3.11.0-beta.1.blend"
+  --release "releases/DH Audio Toolkit 3.11.blend"
 ```
 
 The release file is rebuilt from `src/dh_audio_toolkit.py`; test node groups,
@@ -27,12 +27,12 @@ stable `blender_assets.cats.txt` sidecar beside the `.blend`.
 
 ## Generated-assets branch
 
-The `generated-assets` branch contains the latest validated `.blend` release
-and catalog sidecar for convenient download and local testing. The GitHub
-Actions **Generate Blender release assets** job rebuilds them from `main` on
-pushes to `main` and can also be started manually with a source branch or tag.
-Generated binaries are intentionally kept off `main`; source and tests remain
-the canonical development surface there.
+The `releases/` directory on `main` contains the latest validated `.blend`
+release and catalog sidecar for direct download. The `generated-assets` branch
+mirrors those files for convenient asset-only browsing and local testing. The
+GitHub Actions **Generate Blender release assets** job rebuilds both locations
+from `main` on pushes to `main` and can also be started manually with a source
+branch or tag.
 
 The suite checks:
 

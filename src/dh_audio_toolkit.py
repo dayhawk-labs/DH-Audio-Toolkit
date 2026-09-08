@@ -3,11 +3,11 @@ import re
 import os
 
 # =====================================================================
-# DH AUDIO TOOLKIT 3.11.0-beta.1
+# DH AUDIO TOOLKIT 3.11
 # Blender 5.2+
 #
-# 3.11.0-beta.1:
-# - Added peer-beta geometry effects for deforming arbitrary point geometry
+# 3.11:
+# - Added geometry effects for deforming arbitrary point geometry
 #   and extruding mesh faces from reusable spectrum carriers.
 # - Added a shader UV transform helper for audio-driven offset, scale, and
 #   rotation without rebuilding coordinate math in every material.
@@ -7791,9 +7791,9 @@ The design is intentionally split into:
     TRANSPORT   named attributes for geometry and materials
     SHADE       read and reshape those attributes in materials
 
-This is a peer beta. The public asset names and standard dh_audio_* attributes
-are compatibility-sensitive, but newly introduced beta controls may still be
-refined from testing feedback before a stable release.
+The public asset names and standard dh_audio_* attributes are
+compatibility-sensitive. This release is intended to be used directly as a
+portable Blender asset library.
 
 
 ======================================================================
@@ -8466,7 +8466,7 @@ BETA CONSTRAINTS
 
     Geometry Nodes fields do not directly cross into the Compositor. A future
     compositor layer needs an explicit transport such as rendered attributes,
-    passes, images, or scene-level values; it is not part of this beta.
+    passes, images, or scene-level values; it is not part of this release.
 
 
 ======================================================================

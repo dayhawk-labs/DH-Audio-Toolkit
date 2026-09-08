@@ -1,4 +1,4 @@
-# DH Audio Toolkit 3.11 beta quick start
+# DH Audio Toolkit 3.11 quick start
 
 Requires Blender 5.2 or newer. Keep the release `.blend` and its adjacent
 `blender_assets.cats.txt` together in one Blender Asset Library folder.
@@ -77,4 +77,3 @@ Please report the Blender version, node chain, selected Sound/channel, frame,
 whether playback was sequential or baked, and whether geometry was instanced
 or realized. A small `.blend` reproducer and a screenshot of the group
 interface are especially useful.
-
