@@ -32,8 +32,8 @@ def write_fixture(root: Path, *, missing_readme: bool = False) -> None:
     (root / "docs/RELEASE_NOTES_3.11.md").write_text(
         "# DH Audio Toolkit 3.11\n"
     )
-    (root / "releases").mkdir()
-    (root / "releases/DH Audio Toolkit 3.11.blend").write_bytes(b"")
+    (root / "releases/DH Audio Toolkit 3.11").mkdir(parents=True)
+    (root / "releases/DH Audio Toolkit 3.11/DH Audio Toolkit 3.11.blend").write_bytes(b"")
 
 
 def test_real_repository_is_consistent():

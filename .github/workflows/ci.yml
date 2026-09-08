@@ -96,7 +96,7 @@ jobs:
           blender --background --factory-startup \
             --python tests/blender_52_regression.py -- \
             --report "temp/blender_52_release_report.json" \
-            --release "releases/DH Audio Toolkit ${version}.blend"
+            --release "releases/DH Audio Toolkit ${version}/DH Audio Toolkit ${version}.blend"
           python tools/check_consistency.py --require-release
 
       - name: Publish current release to main
@@ -107,7 +107,7 @@ jobs:
           version="$(tr -d '\r\n' < VERSION)"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add "releases/DH Audio Toolkit ${version}.blend" releases/blender_assets.cats.txt
+          git add "releases/DH Audio Toolkit ${version}"
           if git diff --cached --quiet; then
             echo "Main already contains the current release asset."
             exit 0
@@ -126,9 +126,11 @@ jobs:
         shell: bash
         run: |
           version="$(tr -d '\r\n' < source/VERSION)"
-          mkdir -p "generated/releases"
-          cp "source/releases/DH Audio Toolkit ${version}.blend" "generated/releases/"
-          cp source/releases/blender_assets.cats.txt generated/releases/
+          mkdir -p "generated/releases/DH Audio Toolkit ${version}"
+          cp "source/releases/DH Audio Toolkit ${version}/DH Audio Toolkit ${version}.blend" \
+            "generated/releases/DH Audio Toolkit ${version}/"
+          cp "source/releases/DH Audio Toolkit ${version}/blender_assets.cats.txt" \
+            "generated/releases/DH Audio Toolkit ${version}/"
           cp "source/docs/RELEASE_NOTES_${version}.md" generated/docs/ 2>/dev/null || true
           cd generated
           git config user.name "github-actions[bot]"

@@ -87,7 +87,10 @@ def check(root: Path, *, require_release: bool = False) -> list[str]:
         if not expected_release_note.is_file():
             errors.append(f"MISSING_CURRENT_RELEASE_NOTE: {expected_release_note.relative_to(root)}")
         if require_release:
-            expected_blend = root / "releases" / f"DH Audio Toolkit {expected}.blend"
+            expected_blend = (
+                root / "releases" / f"DH Audio Toolkit {expected}"
+                / f"DH Audio Toolkit {expected}.blend"
+            )
             if not expected_blend.is_file():
                 errors.append(f"MISSING_CURRENT_RELEASE: {expected_blend.relative_to(root)}")
 
