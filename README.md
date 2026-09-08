@@ -86,6 +86,35 @@ ANALYZE  →  MAP  →  CONSUME
 | **DH Audio Shader Map** | Range mapping, clamping, inversion, and power curves. |
 | **DH Audio Shader UV Transform** | Audio-driven offset, pivot scale, and Z rotation. |
 
+## Public-node previews
+
+These are the public group interfaces as they appear in Blender's Geometry
+Nodes editor. They show the available inputs, outputs, and collapsed panels;
+they intentionally do not expose internal implementation routing.
+
+### Core workflow
+
+| Analyze | Shape over time |
+| --- | --- |
+| ![DH Audio Analyzer](docs/images/node-previews/dh-audio-analyzer.png) | ![DH Audio Temporal Response](docs/images/node-previews/dh-audio-temporal-response.png) |
+
+| Retain history | Read in materials |
+| --- | --- |
+| ![DH Audio Spectrum History](docs/images/node-previews/dh-audio-spectrum-history.png) | ![DH Audio Material Reader](docs/images/node-previews/dh-audio-material-reader.png) |
+
+### Geometry consumers
+
+| Spectrum Bars | Spectrum Curve |
+| --- | --- |
+| ![DH Audio Spectrum Bars](docs/images/node-previews/dh-audio-spectrum-bars.png) | ![DH Audio Spectrum Curve](docs/images/node-previews/dh-audio-spectrum-curve.png) |
+
+| Radial Spectrum | Mesh Deform |
+| --- | --- |
+| ![DH Audio Radial Spectrum](docs/images/node-previews/dh-audio-radial-spectrum.png) | ![DH Audio Mesh Deform](docs/images/node-previews/dh-audio-mesh-deform.png) |
+
+See [public-node preview capture](docs/NODE_PREVIEWS.md) for the approved
+capture manifest and the reproducible VPS workflow.
+
 ## Compatibility model
 
 The toolkit shares a stable attribute schema across analyzers, geometry, and
@@ -153,6 +182,7 @@ folder is already arranged this way.
 - [Release notes](docs/RELEASE_NOTES_3.13.0.md)
 - [Source](src/dh_audio_toolkit.py)
 - [Regression tests](tests/blender_52_regression.py)
+- [Public-node preview capture](docs/NODE_PREVIEWS.md)
 
 ## Roadmap ideas
 
