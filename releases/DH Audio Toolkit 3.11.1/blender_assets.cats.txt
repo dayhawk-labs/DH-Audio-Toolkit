@@ -1,0 +1,13 @@
+# This is an Asset Catalog Definition file for Blender.
+# DH Audio Toolkit entries use stable UUIDs for portable sharing.
+VERSION 1
+
+7bf84dff-c105-5fc6-9c5c-701196ef6282:Geometry Nodes:Geometry Nodes
+b0267192-518d-57aa-b6c9-e77dfb7075f3:Geometry Nodes/DH Audio:DH Audio
+75e799e2-55ce-553a-8fdf-a74c5cf0de2c:Geometry Nodes/DH Audio/Analysis:Analysis
+bb4cca6c-c5d5-52c9-80fb-754adc068f91:Geometry Nodes/DH Audio/Mapping:Mapping
+9b46dff4-fa9d-510f-b0ae-a8af6da87e3a:Geometry Nodes/DH Audio/Query:Query
+de47b34b-1184-5bc8-84ac-3c5ada05f601:Geometry Nodes/DH Audio/Visualizers:Visualizers
+a4faf3f4-5a13-5f83-ae97-28993f20ac20:Geometry Nodes/DH Audio/Utilities:Utilities
+943fa2e2-dade-5829-a651-33cce45d37fb:DH Audio:DH Audio
+1a181044-5483-5a07-ad44-2025bf0459e4:DH Audio/Shaders:Shaders
