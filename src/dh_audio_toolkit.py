@@ -2250,8 +2250,11 @@ def create_spectrum_history():
     set_default(safe_band_count, 1, 2)
     link(tree, history_size, "Point Count", safe_band_count, 0)
 
+    # Attribute Statistic in Blender 5.2 supports float and vector fields.
+    # Reading this integer row index as FLOAT keeps the maximum row age exact
+    # while letting the downstream integer math convert it for grid counts.
     surface_age = named_attribute_node(
-        nodes, "dh_audio_history_index", "INT",
+        nodes, "dh_audio_history_index", "FLOAT",
         location=(1180, 430), label="Surface History Age",
     )
     surface_age.name = "Surface History Age"
@@ -2259,7 +2262,7 @@ def create_spectrum_history():
     age_stats = nodes.new("GeometryNodeAttributeStatistic")
     age_stats.name = "Surface Oldest Row"
     age_stats.label = "Surface Oldest Row"
-    age_stats.data_type = "INT"
+    age_stats.data_type = "FLOAT"
     age_stats.domain = "POINT"
     age_stats.location = (1400, 430)
     age_stats.width = 210
