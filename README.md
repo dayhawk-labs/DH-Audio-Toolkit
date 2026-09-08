@@ -2,7 +2,7 @@
 
 **Audio-reactive Geometry Nodes and Shader Nodes for Blender 5.2+**
 
-**Current release:** `3.11`
+**Current release:** `3.11.1`
 **Status:** Blender 5.2 release
 
 DH Audio Toolkit is a modular toolkit built around Blender 5.2's **Sample Sound
@@ -11,12 +11,12 @@ instances, materials, and shader controls.
 
 > **Compatibility note:** public node-group names and `dh_audio_*` attributes
 > are compatibility-sensitive. Start with the [quickstart](docs/BETA_QUICKSTART.md)
-> and review the [release notes](docs/RELEASE_NOTES_3.11.md).
+> and review the [release notes](docs/RELEASE_NOTES_3.11.1.md).
 
 ## Start here
 
-1. Download `DH-Audio-Toolkit-3.11.zip` from the [GitHub Releases](https://github.com/dayhawk-labs/DH-Audio-Toolkit/releases) page.
-2. Extract the folder named `DH Audio Toolkit 3.11`.
+1. Download `DH-Audio-Toolkit-3.11.1.zip` from the [GitHub Releases](https://github.com/dayhawk-labs/DH-Audio-Toolkit/releases) page.
+2. Extract the folder named `DH Audio Toolkit 3.11.1`.
 3. Add that extracted folder as a Blender Asset Library.
 4. Load node groups from the **DH Audio** catalog.
 5. Pick a workflow from the [recipe guide](docs/RECIPES.md).
@@ -146,7 +146,7 @@ folder is already arranged this way.
 
 - [Recipes and examples](docs/RECIPES.md)
 - [Quickstart](docs/BETA_QUICKSTART.md)
-- [Release notes](docs/RELEASE_NOTES_3.11.md)
+- [Release notes](docs/RELEASE_NOTES_3.11.1.md)
 - [Source](src/dh_audio_toolkit.py)
 - [Regression tests](tests/blender_52_regression.py)
 

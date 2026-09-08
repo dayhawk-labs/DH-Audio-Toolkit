@@ -18,7 +18,7 @@ To create a clean asset-library build after the tests pass:
 & "C:\path\to\Blender 5.2\blender.exe" --background --factory-startup `
   --python tests/blender_52_regression.py -- `
   --report temp/blender_52_report.json `
-  --release "releases/DH Audio Toolkit 3.11/DH Audio Toolkit 3.11.blend"
+  --release "releases/DH Audio Toolkit 3.11.1/DH Audio Toolkit 3.11.1.blend"
 ```
 
 The release file is rebuilt from `src/dh_audio_toolkit.py`; test node groups,

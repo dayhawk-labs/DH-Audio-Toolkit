@@ -4,8 +4,12 @@ import os
 from pathlib import Path
 
 # =====================================================================
-# DH AUDIO TOOLKIT 3.11
+# DH AUDIO TOOLKIT 3.11.1
 # Blender 5.2+
+#
+# 3.11.1:
+# - Release packaging now excludes Blender recovery backups and validates the
+#   exact distributable archive manifest.
 #
 # 3.11:
 # - Added geometry effects for deforming arbitrary point geometry

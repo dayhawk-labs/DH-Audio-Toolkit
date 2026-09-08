@@ -42,10 +42,10 @@ jobs:
         run: python tools/check_consistency.py
 
       - name: Run checker tests
-        run: python -m pytest -q tests/test_check_consistency.py
+        run: python -m pytest -q tests/test_check_consistency.py tests/test_check_release_package.py
 
       - name: Compile Python sources
-        run: python -m py_compile src/dh_audio_toolkit.py tests/blender_52_regression.py tools/check_consistency.py tests/test_check_consistency.py
+        run: python -m py_compile src/dh_audio_toolkit.py tests/blender_52_regression.py tools/check_consistency.py tools/check_release_package.py tests/test_check_consistency.py tests/test_check_release_package.py
 
   blender:
     name: Blender 5.2 regression (optional)
@@ -173,11 +173,11 @@ jobs:
             -print -delete
           mkdir -p dist
           (cd releases && zip -r "../dist/DH-Audio-Toolkit-${version}.zip" "DH Audio Toolkit ${version}")
-          if unzip -Z1 "dist/DH-Audio-Toolkit-${version}.zip" | \
-            grep -Eq '\.blend[0-9]+$'; then
-            echo "ERROR: Blender backup file found in release ZIP"
-            exit 1
-          fi
+          python tools/check_release_package.py \
+            --archive "dist/DH-Audio-Toolkit-${version}.zip" \
+            --version "$version"
+          sha256sum "dist/DH-Audio-Toolkit-${version}.zip" \
+            > "dist/DH-Audio-Toolkit-${version}.zip.sha256"
 
       - name: Publish GitHub Release
         env:
@@ -194,6 +194,7 @@ jobs:
           fi
           gh release upload "$tag" \
             "dist/DH-Audio-Toolkit-${version}.zip" \
+            "dist/DH-Audio-Toolkit-${version}.zip.sha256" \
             "releases/DH Audio Toolkit ${version}/DH Audio Toolkit ${version}.blend" \
             "releases/DH Audio Toolkit ${version}/blender_assets.cats.txt" \
             --repo "$GITHUB_REPOSITORY" \
