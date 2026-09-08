@@ -125,7 +125,7 @@ jobs:
                 blender_pid=$!
                 for _ in $(seq 1 120); do
                   if [[ -f "$READY" ]]; then
-                    window_id="$(wmctrl -l | awk '/Blender/{print $1; exit}')"
+                    window_id="$(wmctrl -l | awk "/Blender/{print \\$1; exit}")"
                     if [[ -z "$window_id" ]]; then
                       echo "Could not find Blender window" >&2
                       exit 1
