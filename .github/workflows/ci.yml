@@ -105,6 +105,16 @@ jobs:
             --release "releases/DH Audio Toolkit ${version}/DH Audio Toolkit ${version}.blend"
           python tools/check_consistency.py --require-release
 
+      - name: Export node graph previews
+        working-directory: source
+        run: blender --background --factory-startup --python tools/export_node_graph_svgs.py
+
+      - name: Upload node graph previews
+        uses: actions/upload-artifact@v4
+        with:
+          name: node-graph-previews
+          path: source/temp/node-previews/*.svg
+
       - name: Check out generated-assets branch
         uses: actions/checkout@v4
         with:
