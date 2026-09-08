@@ -45,7 +45,7 @@ jobs:
         run: python -m pytest -q tests/test_check_consistency.py tests/test_check_release_package.py
 
       - name: Compile Python sources
-        run: python -m py_compile src/dh_audio_toolkit.py tests/blender_52_regression.py tools/check_consistency.py tools/check_release_package.py tools/prepare_node_editor_screenshot.py tests/test_check_consistency.py tests/test_check_release_package.py
+        run: python -m py_compile src/dh_audio_toolkit.py tests/blender_52_regression.py tools/check_consistency.py tools/check_release_package.py tools/capture_node_editor_screenshots.py tests/test_check_consistency.py tests/test_check_release_package.py
 
   blender:
     name: Blender 5.2 regression (optional)
