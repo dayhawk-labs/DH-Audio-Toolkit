@@ -30,7 +30,9 @@ import wave
 import bpy
 
 
-TOOLKIT_VERSION = "3.11.0-beta.1"
+TOOLKIT_VERSION = (Path(__file__).resolve().parents[1] / "VERSION").read_text(
+    encoding="utf-8"
+).strip()
 
 PUBLIC_GROUPS = {
     "DH Audio Analyzer": ("GeometryNodeTree", 330, "75e799e2-55ce-553a-8fdf-a74c5cf0de2c"),

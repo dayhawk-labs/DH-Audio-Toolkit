@@ -15,6 +15,14 @@ def lines(path: Path) -> list[str]:
     return path.read_text(encoding="utf-8").splitlines()
 
 
+def authoritative_version(root: Path) -> str | None:
+    path = root / "VERSION"
+    if not path.is_file():
+        return None
+    value = path.read_text(encoding="utf-8").strip()
+    return value if VERSION.fullmatch(value) else None
+
+
 def versions(path: Path) -> list[tuple[str, int]]:
     result = []
     for number, line in enumerate(lines(path), 1):
@@ -59,13 +67,28 @@ def check(root: Path) -> list[str]:
         "validation": root / "docs/VALIDATION.md",
     }
     missing = [str(path.relative_to(root)) for path in required.values() if not path.is_file()]
+    if not (root / "VERSION").is_file():
+        missing.append("VERSION")
     if missing:
         return [f"MISSING: {path}" for path in missing]
 
+    expected = authoritative_version(root)
     errors: list[str] = []
-    found_versions = {value for path in required.values() for value, _ in versions(path)}
-    if len(found_versions) != 1:
-        errors.append(f"VERSION_MISMATCH: expected one version, found {sorted(found_versions)}")
+    if expected is None:
+        errors.append("INVALID_VERSION: VERSION must contain one semantic version")
+    else:
+        for path in required.values():
+            for value, line in versions(path):
+                if value != expected:
+                    errors.append(
+                        f"STALE_VERSION: {path.relative_to(root)}:{line} has {value}, expected {expected}"
+                    )
+        expected_release_note = root / "docs" / f"RELEASE_NOTES_{expected}.md"
+        if not expected_release_note.is_file():
+            errors.append(f"MISSING_CURRENT_RELEASE_NOTE: {expected_release_note.relative_to(root)}")
+        expected_blend = root / "releases" / f"DH Audio Toolkit {expected}.blend"
+        if not expected_blend.is_file():
+            errors.append(f"MISSING_CURRENT_RELEASE: {expected_blend.relative_to(root)}")
 
     inventories = {kind: groups(path, kind) for kind, path in required.items() if kind != "validation"}
     authoritative = inventories["tests"]

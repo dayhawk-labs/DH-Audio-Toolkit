@@ -153,7 +153,13 @@ import os
 # - Material Reader can switch between Geometry and Instancer lookup.
 # =====================================================================
 
-TOOLKIT_VERSION = "3.11.0-beta.1"
+def _load_toolkit_version() -> str:
+    """Read the repository's single authoritative toolkit version."""
+    version_path = Path(__file__).resolve().parents[1] / "VERSION"
+    return version_path.read_text(encoding="utf-8").strip()
+
+
+TOOLKIT_VERSION = _load_toolkit_version()
 BLENDER_MIN_VERSION = (5, 2, 0)
 
 REBUILD_EXISTING = True

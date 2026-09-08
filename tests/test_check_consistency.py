@@ -14,6 +14,7 @@ def write_fixture(root: Path, *, missing_readme: bool = False) -> None:
     (root / "tests").mkdir()
     (root / "docs").mkdir()
     (root / "tools").mkdir()
+    (root / "VERSION").write_text("3.11.0-beta.1\n")
     (root / "src/dh_audio_toolkit.py").write_text(
         'TOOLKIT_VERSION = "3.11.0-beta.1"\n#   - DH Audio Analyzer\n'
     )
@@ -28,6 +29,11 @@ def write_fixture(root: Path, *, missing_readme: bool = False) -> None:
     (root / "docs/VALIDATION.md").write_text(
         "# Validation\nDH Audio Toolkit 3.11.0-beta.1.blend\n"
     )
+    (root / "docs/RELEASE_NOTES_3.11.0-beta.1.md").write_text(
+        "# DH Audio Toolkit 3.11.0-beta.1\n"
+    )
+    (root / "releases").mkdir()
+    (root / "releases/DH Audio Toolkit 3.11.0-beta.1.blend").write_bytes(b"")
 
 
 def test_real_repository_is_consistent():
@@ -48,4 +54,4 @@ def test_version_mismatch_is_reported():
         root = Path(directory)
         write_fixture(root)
         (root / "docs/VALIDATION.md").write_text("DH Audio Toolkit 3.10.0.blend\n")
-        assert any("VERSION_MISMATCH" in error for error in CHECKER.check(root))
+        assert any("STALE_VERSION" in error for error in CHECKER.check(root))
