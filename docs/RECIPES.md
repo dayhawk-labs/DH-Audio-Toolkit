@@ -16,6 +16,9 @@ shortest path from a Sound datablock to a visible audio-reactive result.
 [**Analyzer to Curve or Fill**](recipes/analyzer_curve_fill.md) is the canonical
 modular carrier workflow for reusable spectrum geometry.
 
+[**Material response: live amplitude and peak**](recipes/material_response.md)
+is the canonical Geometry Nodes → Shader Nodes attribute workflow.
+
 ## Quick chooser
 
 | Goal | Start with |
@@ -25,7 +28,7 @@ modular carrier workflow for reusable spectrum geometry.
 | A custom visualizer | **Analyzer → Spectrum Instances** |
 | A single reactive value | **Band Query** or **Sample Range** |
 | Audio on existing geometry | **Spectrum Bridge** |
-| Audio-driven materials | **Material Reader** |
+| Audio-driven materials | [**Material response**](recipes/material_response.md) |
 
 ## 1. Standalone bars
 
