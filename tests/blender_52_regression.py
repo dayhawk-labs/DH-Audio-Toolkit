@@ -154,13 +154,13 @@ EXPECTED_PANELS = {
     "DH Audio Temporal Response": {
         "Source": False,
         "Timing": False,
-        "Peak Hold": True,
+        "Peak Hold": False,
         "Outputs": False,
     },
     "DH Audio Spectrum History": {
         "Source": False,
         "History": False,
-        "Surface": True,
+        "Surface": False,
         "Outputs": False,
     },
     "DH Audio Radial Spectrum": {

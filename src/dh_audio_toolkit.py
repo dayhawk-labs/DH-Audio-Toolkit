@@ -1550,7 +1550,7 @@ def create_temporal_response_group():
     peak_panel = tree.interface.new_panel(
         name="Peak Hold",
         description="Optional peak marker with a hold period and exponential decay",
-        default_closed=True,
+        default_closed=False,
     )
     outputs_panel = tree.interface.new_panel(
         name="Outputs",
@@ -1980,7 +1980,7 @@ def create_spectrum_history():
     surface_panel = tree.interface.new_panel(
         name="Surface",
         description="Optional connected mesh from retained spectrum rows",
-        default_closed=True,
+        default_closed=False,
     )
     outputs_panel = tree.interface.new_panel(
         name="Outputs",
