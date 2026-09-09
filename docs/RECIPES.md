@@ -13,12 +13,15 @@ material option, and topology checks in the Blender regression suite.
 [**Spectrum Bars: First Result**](recipes/spectrum_bars_first_result.md) is the
 shortest path from a Sound datablock to a visible audio-reactive result.
 
+[**Analyzer to Curve or Fill**](recipes/analyzer_curve_fill.md) is the canonical
+modular carrier workflow for reusable spectrum geometry.
+
 ## Quick chooser
 
 | Goal | Start with |
 | --- | --- |
 | Fastest first result | [**Spectrum Bars**](recipes/spectrum_bars_first_result.md) |
-| A reusable audio graph | **Analyzer → Spectrum Points** |
+| A reusable audio graph | [**Analyzer → Curve or Fill**](recipes/analyzer_curve_fill.md) |
 | A custom visualizer | **Analyzer → Spectrum Instances** |
 | A single reactive value | **Band Query** or **Sample Range** |
 | Audio on existing geometry | **Spectrum Bridge** |

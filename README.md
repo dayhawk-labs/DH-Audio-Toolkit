@@ -30,6 +30,7 @@ full Blender setup. The [recipe guide](docs/RECIPES.md) has complete workflows.
 For a complete stateful build, start with the
 [Peak-Hold Waterfall Surface recipe](docs/recipes/peak_hold_waterfall.md).
 For the shortest first result, use the [Spectrum Bars recipe](docs/recipes/spectrum_bars_first_result.md).
+For a reusable carrier graph, use the [Analyzer to Curve or Fill recipe](docs/recipes/analyzer_curve_fill.md).
 
 ## Choose a workflow
 
