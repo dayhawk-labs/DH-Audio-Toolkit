@@ -14,5 +14,20 @@ The verified Analyzer → Temporal Response → Spectrum Points → Spectrum His
 Surface workflow has labeled stages and an in-file usage note. Simulation Zones
 still need sequential playback or baking before judging the final animation.
 
+### Workflow node captures
+
+These are the public node exteriors used by the demo, captured from Blender 5.2
+at documentation scale:
+
+| Stage | Node |
+| --- | --- |
+| Analyze | ![DH Audio Analyzer](../images/node-previews/dh-audio-analyzer.png) |
+| Smooth and peak | ![DH Audio Temporal Response](../images/node-previews/dh-audio-temporal-response.png) |
+| Position bands | ![DH Audio Spectrum Points](../images/node-previews/dh-audio-spectrum-points.png) |
+| Retain and connect | ![DH Audio Spectrum History](../images/node-previews/dh-audio-spectrum-history.png) |
+
+The `.blend` also contains the labeled node-tree layout and the preview scene;
+open it in Blender to inspect the complete wiring and viewport setup.
+
 Rebuild it with `tools/create_peak_hold_waterfall_demo.py` if the toolkit
 interface changes.
