@@ -7,8 +7,8 @@ recipe milestone. GitHub `main` remains the source of truth.
 
 1. Add a second recipe for the fast path: `Spectrum Bars` as a self-contained
    visualizer, including sensible audio and material defaults.
-2. Add a small demo `.blend` only if the recipe exposes a workflow that is
-   difficult to communicate through the Asset Library alone.
+2. Expand the verified Peak-Hold Waterfall Demo before creating demos for the
+   other recipes.
 3. Re-run the visual capture and interface export whenever a public group,
    panel default, socket, or description changes.
 4. Cut the next versioned release only after the recipe and demo validation are

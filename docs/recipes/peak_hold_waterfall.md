@@ -9,6 +9,10 @@ judging the result.
 
 ## What you will build
 
+An inspectable starter file is available as the **Peak-Hold Waterfall Demo**.
+Run `tools/create_peak_hold_waterfall_demo.py` from Blender 5.2+ to create it;
+the file contains this graph, labeled stages, and a short in-file usage note.
+
 ~~~text
 Sound
   -> DH Audio Analyzer
