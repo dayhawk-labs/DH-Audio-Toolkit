@@ -4,6 +4,8 @@ This guide is the operational starting point for people and agents changing
 DH Audio Toolkit. GitHub main is the source of truth; a local checkout is a
 working copy only.
 
+For the current handoff priorities, see [Next Steps](NEXT_STEPS.md).
+
 ## Source of truth
 
 | Surface | Owns |

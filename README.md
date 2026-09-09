@@ -142,6 +142,7 @@ The standard schema makes analyzer-compatible groups composable:
 | Regenerate reviewed node screenshots | [Node preview process](docs/NODE_PREVIEWS.md) |
 | Verify behavior | [Blender regression](tests/blender_52_regression.py) |
 | Review changes/releases | [Validation guide](docs/VALIDATION.md) |
+| Plan the next increment | [Next steps](docs/NEXT_STEPS.md) |
 
 The generator, tests, and documentation tools are development resources; end
 users only need the released Asset Library folder.
