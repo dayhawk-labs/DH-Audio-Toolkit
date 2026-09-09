@@ -21,10 +21,10 @@ inspect or extend; the **History Surface** output is the final geometry.
 
 ![Peak-Hold Waterfall complete wiring](images/peak-hold-waterfall-workflow.png)
 
-The intended viewport result and presentation reference. Open the demo and
-play sequentially from frame 1 (or bake) before evaluating a later frame; the
-actual Geometry Nodes chain applies the waterfall material and produces the
-surface in the file.
+An actual Blender viewport capture of the evaluated Geometry Nodes result at
+frame 4. Open the demo and play sequentially from frame 1 (or bake) before
+evaluating a later frame; the node chain applies the waterfall material and
+produces the surface shown here.
 
 ![Peak-Hold Waterfall viewport result](images/peak-hold-waterfall-viewport.png)
 
