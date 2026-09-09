@@ -84,33 +84,13 @@ def make_demo_sound():
         wav_path.unlink(missing_ok=True)
 
 
-def make_showcase(scene):
-    mesh = bpy.data.meshes.new("DH Demo Waterfall Preview Mesh")
-    verts = []
-    faces = []
-    rows, cols = 18, 48
-    for row in range(rows):
-        y = (row - (rows - 1) / 2) * 0.22
-        for col in range(cols):
-            x = (col - (cols - 1) / 2) * 0.16
-            amp = 0.35 + 0.22 * math.sin(col * 0.35 + row * 0.4) + 0.12 * math.sin(col * 0.9)
-            verts.append((x, y, max(0.03, amp)))
-    for row in range(rows - 1):
-        for col in range(cols - 1):
-            base = row * cols + col
-            faces.append((base, base + 1, base + cols + 1, base + cols))
-    mesh.from_pydata(verts, [], faces)
-    mesh.update()
-    preview = bpy.data.objects.new("DH Demo - Waterfall Preview", mesh)
-    scene.collection.objects.link(preview)
-    material = bpy.data.materials.new("DH Demo - Peak Emission")
-    material.diffuse_color = (0.04, 0.28, 0.8, 1.0)
-    material.metallic = 0.15
-    material.roughness = 0.28
-    preview.data.materials.append(material)
-    bevel = preview.modifiers.new("Soft edges", "BEVEL")
-    bevel.width = 0.025
-    bevel.segments = 2
+def make_showcase(scene, tree, material):
+    """Create a camera aimed at the actual Geometry Nodes result."""
+    host = bpy.data.objects.new("DH Demo - Evaluated Waterfall", bpy.data.meshes.new("DH Demo Host Mesh"))
+    scene.collection.objects.link(host)
+    host.modifiers.new(name="Peak-Hold Waterfall Demo", type="NODES").node_group = tree
+    host.data.materials.append(material)
+    host["dh_demo_notes"] = "This object is driven by the documented node tree; no decorative preview mesh is used."
 
     camera_data = bpy.data.cameras.new("DH Demo Camera")
     camera = bpy.data.objects.new("DH Demo Camera", camera_data)
@@ -173,7 +153,15 @@ def main():
     tree.links.new(socket(analyzer.outputs, "Spectrum"), socket(temporal.inputs, "Spectrum"))
     tree.links.new(socket(temporal.outputs, "Spectrum"), socket(points.inputs, "Spectrum"))
     tree.links.new(socket(points.outputs, "Spectrum Points"), socket(history.inputs, "Spectrum Points"))
-    tree.links.new(socket(history.outputs, "Surface"), socket(output.inputs, "Geometry"))
+    material = bpy.data.materials.new("DH Demo - Peak Emission")
+    material.diffuse_color = (0.04, 0.28, 0.8, 1.0)
+    material.metallic = 0.15
+    material.roughness = 0.28
+    set_material = tree.nodes.new("GeometryNodeSetMaterial")
+    set_material.inputs["Material"].default_value = material
+    set_material.location = (650, -40)
+    tree.links.new(socket(history.outputs, "Surface"), socket(set_material.inputs, "Geometry"))
+    tree.links.new(socket(set_material.outputs, "Geometry"), socket(output.inputs, "Geometry"))
 
     f1 = frame(tree, "AUDIO IN", (-1100, 250), (330, 190))
     f2 = frame(tree, "TEMPORAL RESPONSE", (-700, 250), (330, 290))
@@ -196,15 +184,10 @@ def main():
     scene.frame_start = 1
     scene.frame_end = 120
     scene.frame_set(1)
-    obj = bpy.data.objects.new("DH Demo - Peak-Hold Waterfall", bpy.data.meshes.new("DH Demo Host Mesh"))
-    obj.modifiers.new(name="Peak-Hold Waterfall Demo", type="NODES").node_group = tree
-    scene.collection.objects.link(obj)
-
     tree["dh_demo_id"] = "peak_hold_waterfall"
     tree["dh_demo_expected_topology"] = "8 bands x 4 rows = 32 vertices, 21 quad faces"
     tree["dh_demo_workflow"] = "Analyzer -> Temporal Response -> Spectrum Points -> Spectrum History Surface"
-    obj["dh_demo_notes"] = "Packed synthetic Sound is assigned. Replace it if desired, play sequentially from frame 1, then inspect Surface and peak attributes."
-    make_showcase(scene)
+    make_showcase(scene, tree, material)
 
     options.output.parent.mkdir(parents=True, exist_ok=True)
     bpy.ops.wm.save_as_mainfile(filepath=str(options.output), check_existing=False)

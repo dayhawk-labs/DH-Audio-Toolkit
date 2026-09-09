@@ -15,7 +15,7 @@ def test_demo_is_reproducible_and_uses_the_verified_public_chain():
         '"dh_demo_id"',
         '"peak_hold_waterfall"',
         'make_demo_sound()',
-        'make_showcase(scene)',
+        'make_showcase(scene, tree, material)',
         'sound.pack()',
     )
     assert all(fragment in source for fragment in expected)
