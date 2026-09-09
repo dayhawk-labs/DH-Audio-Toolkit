@@ -130,7 +130,10 @@ def make_showcase(scene):
         light = bpy.data.objects.new(name, light_data)
         light.location = location
         scene.collection.objects.link(light)
-    scene.render.engine = "BLENDER_EEVEE_NEXT"
+    try:
+        scene.render.engine = "BLENDER_EEVEE_NEXT"
+    except TypeError:
+        scene.render.engine = "BLENDER_EEVEE"
     scene.render.resolution_x = 900
     scene.render.resolution_y = 600
     scene.render.resolution_percentage = 100
