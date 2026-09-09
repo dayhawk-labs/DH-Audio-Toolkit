@@ -21,9 +21,10 @@ inspect or extend; the **History Surface** output is the final geometry.
 
 ![Peak-Hold Waterfall complete wiring](images/peak-hold-waterfall-workflow.png)
 
-The viewport result at the evaluated demo frame. It is the same waterfall
-workflow with the packed synthetic Sound; play sequentially from frame 1 (or
-bake) before evaluating a later frame.
+The intended viewport result and presentation reference. Open the demo and
+play sequentially from frame 1 (or bake) before evaluating a later frame; the
+actual Geometry Nodes chain applies the waterfall material and produces the
+surface in the file.
 
 ![Peak-Hold Waterfall viewport result](images/peak-hold-waterfall-viewport.png)
 
