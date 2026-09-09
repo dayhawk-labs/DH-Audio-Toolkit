@@ -120,11 +120,18 @@ def make_showcase(scene, tree, material):
     scene.render.filepath = "//DH Demo Waterfall Preview.png"
 
 
+def clear_startup_scene():
+    """Remove Blender factory/startup objects before building the demo scene."""
+    for obj in list(bpy.data.objects):
+        bpy.data.objects.remove(obj, do_unlink=True)
+
+
 def main():
     options = args()
     repo = Path(__file__).resolve().parents[1]
     namespace = runpy.run_path(str(repo / "src" / "dh_audio_toolkit.py"))
     namespace["main"]()
+    clear_startup_scene()
 
     tree = bpy.data.node_groups.new("DH Demo - Peak-Hold Waterfall", "GeometryNodeTree")
     tree.interface.new_socket(name="Geometry", in_out="OUTPUT", socket_type="NodeSocketGeometry")

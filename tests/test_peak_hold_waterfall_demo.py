@@ -17,6 +17,8 @@ def test_demo_is_reproducible_and_uses_the_verified_public_chain():
         'make_demo_sound()',
         'make_showcase(scene, tree, material)',
         'sound.pack()',
+        'def clear_startup_scene()',
+        'clear_startup_scene()\n',
     )
     assert all(fragment in source for fragment in expected)
     assert "--output" in source
