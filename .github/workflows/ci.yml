@@ -42,10 +42,10 @@ jobs:
         run: python tools/check_consistency.py
 
       - name: Run checker tests
-        run: python -m pytest -q tests/test_check_consistency.py tests/test_check_release_package.py
+        run: python -m pytest -q tests/test_check_consistency.py tests/test_check_release_package.py tests/test_public_node_reference.py
 
       - name: Compile Python sources
-        run: python -m py_compile src/dh_audio_toolkit.py tests/blender_52_regression.py tools/check_consistency.py tools/check_release_package.py tests/test_check_consistency.py tests/test_check_release_package.py
+        run: python -m py_compile src/dh_audio_toolkit.py tests/blender_52_regression.py tools/check_consistency.py tools/check_release_package.py tools/export_public_node_interfaces.py tools/build_public_node_reference.py tests/test_check_consistency.py tests/test_check_release_package.py tests/test_public_node_reference.py
 
   blender:
     name: Blender 5.2 regression (optional)
@@ -104,16 +104,6 @@ jobs:
             --report "temp/blender_52_release_report.json" \
             --release "releases/DH Audio Toolkit ${version}/DH Audio Toolkit ${version}.blend"
           python tools/check_consistency.py --require-release
-
-      - name: Export node graph previews
-        working-directory: source
-        run: blender --background --factory-startup --python tools/export_node_graph_svgs.py
-
-      - name: Upload node graph previews
-        uses: actions/upload-artifact@v4
-        with:
-          name: node-graph-previews
-          path: source/temp/node-previews/*.svg
 
       - name: Check out generated-assets branch
         uses: actions/checkout@v4

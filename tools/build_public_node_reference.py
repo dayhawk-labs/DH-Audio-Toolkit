@@ -114,6 +114,35 @@ GUIDANCE = {
     ]),
 }
 
+KEY_CHOICES = {
+    "DH Audio Spectrum Bars": [
+        "**Bar Profile:** Box, Round, Cone, Icosphere, Custom Profile, or Custom Geometry.",
+        "**Custom Profile / Custom Geometry:** supply the corresponding geometry input after choosing the matching profile.",
+    ],
+    "DH Audio Spectrum Curve": [
+        "**Curve Style:** Raw, Smooth, or Smooth + Resample.",
+        "**Tube:** off produces a curve; on turns the selected curve style into an audio-reactive tube.",
+    ],
+    "DH Audio Temporal Response": [
+        "**Peak Hold:** on by default. It exposes Peak Hold Time and Peak Decay, while Peak output stays separate from live Amplitude.",
+    ],
+    "DH Audio Spectrum History": [
+        "**Surface:** off by default. Enable it to emit the connected waterfall mesh, then adjust Row Decimation for density.",
+    ],
+    "DH Audio Analyzer": [
+        "**Window Function** and **FFT Size** use Blender 5.2's native Sample Sound Frequencies menus; their defaults are Hann and 8192.",
+    ],
+    "DH Audio Stereo Analyzer": [
+        "**Window Function** and **FFT Size** use Blender 5.2's native Sample Sound Frequencies menus; their defaults are Hann and 8192.",
+    ],
+    "DH Audio Sample Range": [
+        "**Window Function** and **FFT Size** use Blender 5.2's native Sample Sound Frequencies menus; their defaults are Hann and 8192.",
+    ],
+    "DH Audio Bands": [
+        "**Window Function** and **FFT Size** use Blender 5.2's native Sample Sound Frequencies menus; their defaults are Hann and 8192.",
+    ],
+}
+
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -134,6 +163,8 @@ def default(value):
         return "on" if value else "off"
     if isinstance(value, float):
         return f"{value:.4g}"
+    if isinstance(value, list):
+        return "(" + ", ".join(default(item) for item in value) + ")"
     return clean(value)
 
 
@@ -195,6 +226,8 @@ def build_page(node, slug, filename):
 
 {chr(10).join(f'- {note}' for note in notes)}
 
+{key_choices_section(name)}
+
 ## Interface panels
 
 {chr(10).join(panel_lines)}
@@ -213,6 +246,13 @@ This page was generated from the public Blender interface exported by
 tools/export_public_node_interfaces.py against a fresh toolkit build. Update
 the screenshot and regenerate this page whenever the public interface changes.
 """
+
+
+def key_choices_section(name):
+    choices = KEY_CHOICES.get(name)
+    if not choices:
+        return ""
+    return "## Key choices\n\n" + "\n".join(f"- {choice}" for choice in choices)
 
 
 def build_index(nodes, groups):

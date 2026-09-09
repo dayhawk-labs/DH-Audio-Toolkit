@@ -36,6 +36,13 @@ def json_value(value):
         return value if math.isfinite(value) else None
     if isinstance(value, (tuple, list)):
         return [json_value(item) for item in value]
+    # Blender vector and color defaults are bpy property arrays rather than
+    # Python lists. They are iterable, but their repr contains transient RNA
+    # implementation text and is not useful documentation.
+    try:
+        return [json_value(item) for item in value]
+    except TypeError:
+        pass
     return str(value)
 
 

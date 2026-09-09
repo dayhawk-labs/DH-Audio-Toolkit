@@ -1,9 +1,9 @@
 # Public Node Previews
 
 The images under `docs/images/node-previews/` document the exterior interfaces
-of approved public Geometry Node groups. They are intended for users deciding
-which node group to add and how to connect it; they do not show internal node
-routing.
+of all 25 approved public Geometry Node and Shader Node groups. They are
+intended for users deciding which node group to add and how to connect it; they
+do not show internal node routing.
 
 ## Approved scope
 
@@ -40,8 +40,29 @@ OUTPUT_DIR=/path/to/DH-Audio-Toolkit/docs/images/node-previews \
 ```
 
 The reusable tool creates a temporary node tree containing one allowlisted
-public group at a time, fullscreens the Node Editor, frames the complete node,
-and crops the final Blender-window capture with a small uniform margin.
+public group at a time in its matching Geometry Nodes or Shader Nodes domain.
+It fullscreens the Node Editor, waits for the complete node bounds to settle,
+then crops the final Blender-window capture with a small uniform margin.
+
+## Regenerate the node reference
+
+After captures are reviewed, export the public Blender interfaces and rebuild
+the Markdown knowledge base:
+
+~~~bash
+/opt/dh-audio-tools/blender/blender --background \
+  "temp/DH Audio Toolkit <version>.blend" \
+  --python tools/export_public_node_interfaces.py -- \
+  --output temp/public_node_interfaces.json --expect 25
+python3 tools/build_public_node_reference.py \
+  --interfaces temp/public_node_interfaces.json \
+  --manifest tools/public_node_previews.json \
+  --output-dir docs/nodes
+~~~
+
+The resulting [Public Node Reference](nodes/README.md) contains one page per
+public node, with its captured image, verified inputs and outputs, panel
+defaults, descriptions, and agent notes.
 
 ## Review before committing
 

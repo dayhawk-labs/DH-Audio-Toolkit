@@ -2,189 +2,169 @@
 
 **Audio-reactive Geometry Nodes and Shader Nodes for Blender 5.2+**
 
-**Current release:** `3.13.0`
-**Status:** Blender 5.2 release
+**Current release:** [3.13.0](https://github.com/dayhawk-labs/DH-Audio-Toolkit/releases/tag/v3.13.0)
+**Public assets:** 25 node groups · **Internal groups:** 7 implementation-only groups
 
-DH Audio Toolkit is a modular toolkit built around Blender 5.2's **Sample Sound
-Frequencies** node. It turns audio into reusable spectrum data, geometry,
-instances, materials, and shader controls.
+DH Audio Toolkit turns Blender's Sample Sound Frequencies node into a stable
+audio-data pipeline: analyze once, carry standard attributes through geometry,
+then visualize, deform, query, or read them in materials.
 
-> **Compatibility note:** public node-group names and `dh_audio_*` attributes
-> are compatibility-sensitive. Start with the [quickstart](docs/BETA_QUICKSTART.md)
-> and review the [release notes](docs/RELEASE_NOTES_3.13.0.md).
+> **Compatibility:** public group names and `dh_audio_*` attributes are
+> compatibility-sensitive. GitHub `main` is the development source of truth;
+> releases are the portable Asset Library install.
 
-## Start here
+## Install and first result
 
-1. Download `DH-Audio-Toolkit-3.13.0.zip` from the [GitHub Releases](https://github.com/dayhawk-labs/DH-Audio-Toolkit/releases) page.
-2. Extract the folder named `DH Audio Toolkit 3.13.0`.
-3. Add that extracted folder as a Blender Asset Library.
-4. Load node groups from the **DH Audio** catalog.
-5. Pick a workflow from the [recipe guide](docs/RECIPES.md).
+1. Download `DH-Audio-Toolkit-3.13.0.zip` from
+   [GitHub Releases](https://github.com/dayhawk-labs/DH-Audio-Toolkit/releases).
+2. Extract the complete `DH Audio Toolkit 3.13.0` folder and add it as a
+   Blender Asset Library.
+3. In the Asset Browser, browse **DH Audio** and drag a group into Geometry
+   Nodes or the Shader Editor.
+4. For a fast visualizer, add
+   [Spectrum Bars](docs/nodes/spectrum_bars.md). For a modular workflow, start
+   with [Analyzer](docs/nodes/analyzer.md) → [Spectrum Points](docs/nodes/spectrum_points.md).
 
-See the [beginner installation guide](docs/ASSET_LIBRARY_INSTALL.md) for
-step-by-step Blender instructions.
+The [asset-library installation guide](docs/ASSET_LIBRARY_INSTALL.md) has the
+full Blender setup. The [recipe guide](docs/RECIPES.md) has complete workflows.
 
-You do not need to run the Python generator to use the released asset. The
-generator and tests remain available for development and custom rebuilds.
+## Choose a workflow
 
-For a portable asset release, share the complete versioned folder extracted
-from the ZIP. It contains the `.blend` file, catalog sidecar, and installation
-guide together.
+~~~text
+Analyzer / Stereo Analyzer
+  ├─ Spectrum Points / Stereo Points
+  │    ├─ Spectrum Curve / Fill
+  │    ├─ Spectrum History (waterfall or Surface)
+  │    ├─ Radial Spectrum
+  │    └─ custom geometry
+  ├─ Temporal Response (live smoothing + Peak)
+  ├─ Band Query / Spectrum Sample
+  └─ Spectrum Bridge / Mesh Deform / Mesh Extrude
 
-## The toolkit in one diagram
+Geometry attributes → Material Reader → Shader Response / Map / UV Transform
+~~~
 
-```text
-ANALYZE  →  MAP  →  CONSUME
-   │          │        ├─ bars
-   │          │        ├─ curves
-   │          │        ├─ fills
-   │          │        └─ instances
-   ├─ QUERY      retrieve one scalar band
-   ├─ TRANSPORT  named attributes for geometry and materials
-   └─ SHADE      read and reshape attributes in materials
-```
+| Fastest starting point | Modular geometry pipeline | Material pipeline |
+| --- | --- | --- |
+| [Spectrum Bars](docs/nodes/spectrum_bars.md) has its own analyzer and outputs geometry plus Spectrum Points. | [Analyzer](docs/nodes/analyzer.md) writes the standard carrier; [Spectrum Points](docs/nodes/spectrum_points.md) positions it. | [Material Reader](docs/nodes/material_reader.md) exposes the shared attributes to shader groups. |
+| ![Spectrum Bars](docs/images/node-previews/dh-audio-spectrum-bars.png) | ![Analyzer](docs/images/node-previews/dh-audio-analyzer.png) | ![Material Reader](docs/images/node-previews/dh-audio-material-reader.png) |
 
-## Public node groups
+### Time-aware controls
 
-### Analysis and sampling
+[Temporal Response](docs/nodes/temporal_response.md) is the stateful option for
+attack/release smoothing and a separate Peak Hold marker. Its key controls are
+open by default: `dh_audio_amp` remains the live response and
+`dh_audio_peak` is the held/decaying marker.
+[Spectrum History](docs/nodes/spectrum_history.md) retains prior rows and can
+optionally emit a connected waterfall Surface; its Surface controls are open by
+default while the Surface itself stays disabled.
 
-| Group | Purpose |
+| Temporal Response | Spectrum History |
 | --- | --- |
-| **DH Audio Analyzer** | Core N-band FFT analyzer with standardized spectrum attributes. |
-| **DH Audio Stereo Analyzer** | One field-driven sample node for combined, left, and right spectra. |
-| **DH Audio Frequency Map** | Linear or logarithmic frequency-bound mapping. |
-| **DH Audio Band Query** | Samples one numbered analyzer band. |
-| **DH Audio Spectrum Sample** | Samples a different band per point, face, curve, or instance. |
-| **DH Audio Sample Range** | Samples one custom low-to-high frequency range. |
-| **DH Audio Bands** | Named musical ranges from Total through Air. |
-| **DH Audio Frequency Selection** | Selects bands by actual center-frequency bounds. |
+| ![Temporal Response](docs/images/node-previews/dh-audio-temporal-response.png) | ![Spectrum History](docs/images/node-previews/dh-audio-spectrum-history.png) |
 
-### Mapping and geometry
+Both use Simulation Zones. Play sequentially or bake before expecting complete
+temporal behavior or historical rows.
 
-| Group | Purpose |
+## Public node reference
+
+Every public asset has a page with a current exterior-node screenshot, verified
+socket descriptions/defaults, panel state, and concise agent workflow notes:
+
+**[Browse the 25-node public reference](docs/nodes/README.md)**
+
+### Analysis
+
+- **DH Audio Analyzer** — [reference](docs/nodes/analyzer.md)
+- **DH Audio Stereo Analyzer** — [reference](docs/nodes/stereo_analyzer.md)
+- **DH Audio Bands** — [reference](docs/nodes/bands.md)
+- **DH Audio Sample Range** — [reference](docs/nodes/sample_range.md)
+
+### Query and utilities
+
+- **DH Audio Band Query** — [reference](docs/nodes/band_query.md)
+- **DH Audio Spectrum Sample** — [reference](docs/nodes/spectrum_sample.md)
+- **DH Audio Frequency Map** — [reference](docs/nodes/frequency_map.md)
+- **DH Audio Frequency Selection** — [reference](docs/nodes/frequency_selection.md)
+- **DH Audio Response** — [reference](docs/nodes/response.md)
+
+### Mapping and transport
+
+- **DH Audio Spectrum Points** — [reference](docs/nodes/spectrum_points.md)
+- **DH Audio Stereo Points** — [reference](docs/nodes/stereo_points.md)
+- **DH Audio Spectrum Bridge** — [reference](docs/nodes/spectrum_bridge.md)
+- **DH Audio Mesh Deform** — [reference](docs/nodes/mesh_deform.md)
+- **DH Audio Mesh Extrude** — [reference](docs/nodes/mesh_extrude.md)
+- **DH Audio Radial Spectrum** — [reference](docs/nodes/radial_spectrum.md)
+
+### Visualizers and temporal
+
+- **DH Audio Spectrum Bars** — [reference](docs/nodes/spectrum_bars.md)
+- **DH Audio Spectrum Curve** — [reference](docs/nodes/spectrum_curve.md)
+- **DH Audio Spectrum Fill** — [reference](docs/nodes/spectrum_fill.md)
+- **DH Audio Spectrum Instances** — [reference](docs/nodes/spectrum_instances.md)
+- **DH Audio Spectrum History** — [reference](docs/nodes/spectrum_history.md)
+- **DH Audio Temporal Response** — [reference](docs/nodes/temporal_response.md)
+
+### Shader nodes
+
+- **DH Audio Material Reader** — [reference](docs/nodes/material_reader.md)
+- **DH Audio Shader Response** — [reference](docs/nodes/shader_response.md)
+- **DH Audio Shader Map** — [reference](docs/nodes/shader_map.md)
+- **DH Audio Shader UV Transform** — [reference](docs/nodes/shader_uv_transform.md)
+
+## Shared attribute contract
+
+The standard schema makes analyzer-compatible groups composable:
+
+- **Spectrum:** `dh_audio_amp`, `dh_audio_norm`, `dh_audio_raw`,
+  `dh_audio_band_index`, `dh_audio_band_pos`, `dh_audio_low_hz`,
+  `dh_audio_center_hz`, `dh_audio_high_hz`, `dh_audio_bandwidth_hz`
+- **Temporal:** `dh_audio_peak` alongside the live `dh_audio_amp`
+- **Stereo:** `dh_audio_channel`, `dh_audio_channel_pos`,
+  `dh_audio_left_amp`, `dh_audio_right_amp`, `dh_audio_left_norm`,
+  `dh_audio_right_norm`, `dh_audio_left_raw`, `dh_audio_right_raw`
+- **History:** `dh_audio_history_index`, `dh_audio_history_pos`
+- **Named bands:** `dh_audio_total`, `dh_audio_sub`, `dh_audio_bass`,
+  `dh_audio_low_mid`, `dh_audio_mid`, `dh_audio_high_mids`,
+  `dh_audio_presence`, `dh_audio_brilliance`, `dh_audio_air`
+
+## Documentation and development
+
+| Need | Start here |
 | --- | --- |
-| **DH Audio Spectrum Points** | Converts a flat spectrum carrier into visible points. |
-| **DH Audio Stereo Points** | Mirrors left and right carriers around a shared baseline. |
-| **DH Audio Spectrum Bridge** | Applies spectrum data to arbitrary mesh, curve, or instance geometry. |
-| **DH Audio Spectrum Bars** | Standalone visualizer with built-in analyzer and multiple profiles. |
-| **DH Audio Spectrum Curve** | Creates raw, smoothed, resampled, and tube curves. |
-| **DH Audio Spectrum Fill** | Builds a filled spectrum silhouette. |
-| **DH Audio Spectrum Instances** | Instances arbitrary geometry once per spectrum band. |
-| **DH Audio Radial Spectrum** | Maps a spectrum into circles, arcs, or spirals. |
-| **DH Audio Mesh Deform** | Displaces arbitrary mesh or curve points. |
-| **DH Audio Mesh Extrude** | Extrudes mesh faces from reusable spectrum data. |
-| **DH Audio Spectrum History** | Accumulates spectrum points into bounded waterfall rows with an optional connected surface. |
+| Build a result | [Recipes and examples](docs/RECIPES.md) |
+| Install the released asset | [Asset Library install](docs/ASSET_LIBRARY_INSTALL.md) |
+| Inspect an exact public interface | [Public Node Reference](docs/nodes/README.md) |
+| Change the toolkit safely | [Agent Guide](docs/AGENT_GUIDE.md) |
+| Regenerate reviewed node screenshots | [Node preview process](docs/NODE_PREVIEWS.md) |
+| Verify behavior | [Blender regression](tests/blender_52_regression.py) |
+| Review changes/releases | [Validation guide](docs/VALIDATION.md) |
 
-### Response and materials
-
-| Group | Purpose |
-| --- | --- |
-| **DH Audio Response** | Gain, normalization, clamp, and response shaping for geometry. |
-| **DH Audio Temporal Response** | Frame-rate-independent attack/release smoothing with optional peak hold and decay. |
-| **DH Audio Material Reader** | Reads spectrum, stereo, history, and named-band attributes. |
-| **DH Audio Shader Response** | Material-side response shaping. |
-| **DH Audio Shader Map** | Range mapping, clamping, inversion, and power curves. |
-| **DH Audio Shader UV Transform** | Audio-driven offset, pivot scale, and Z rotation. |
-
-## Public-node previews
-
-These are the public group interfaces as they appear in Blender's Geometry
-Nodes editor. They show the available inputs, outputs, and collapsed panels;
-they intentionally do not expose internal implementation routing.
-
-### Core workflow
-
-| Analyze | Shape over time |
-| --- | --- |
-| ![DH Audio Analyzer](docs/images/node-previews/dh-audio-analyzer.png) | ![DH Audio Temporal Response](docs/images/node-previews/dh-audio-temporal-response.png) |
-
-| Retain history | Read in materials |
-| --- | --- |
-| ![DH Audio Spectrum History](docs/images/node-previews/dh-audio-spectrum-history.png) | ![DH Audio Material Reader](docs/images/node-previews/dh-audio-material-reader.png) |
-
-### Geometry consumers
-
-| Spectrum Bars | Spectrum Curve |
-| --- | --- |
-| ![DH Audio Spectrum Bars](docs/images/node-previews/dh-audio-spectrum-bars.png) | ![DH Audio Spectrum Curve](docs/images/node-previews/dh-audio-spectrum-curve.png) |
-
-| Radial Spectrum | Mesh Deform |
-| --- | --- |
-| ![DH Audio Radial Spectrum](docs/images/node-previews/dh-audio-radial-spectrum.png) | ![DH Audio Mesh Deform](docs/images/node-previews/dh-audio-mesh-deform.png) |
-
-See [public-node preview capture](docs/NODE_PREVIEWS.md) for the approved
-capture manifest and the reproducible VPS workflow.
-
-## Compatibility model
-
-The toolkit shares a stable attribute schema across analyzers, geometry, and
-materials. This lets you swap consumers without rebuilding the analysis stage.
-
-### Spectrum attributes
-
-`dh_audio_amp` · `dh_audio_norm` · `dh_audio_raw` · `dh_audio_band_index` ·
-`dh_audio_band_pos` · `dh_audio_low_hz` · `dh_audio_center_hz` ·
-`dh_audio_high_hz` · `dh_audio_bandwidth_hz`
-
-Temporal Response additionally writes `dh_audio_peak` when its Peak Hold
-control is enabled. It is a held/decaying marker; `dh_audio_amp` remains the
-live attack/release-smoothed amplitude.
-
-### Stereo attributes
-
-`dh_audio_channel` (`0 = Left`, `1 = Right`) · `dh_audio_channel_pos` (`-1 =
-Left`, `+1 = Right`) · `dh_audio_left_amp` · `dh_audio_right_amp` ·
-`dh_audio_left_norm` · `dh_audio_right_norm` · `dh_audio_left_raw` ·
-`dh_audio_right_raw`
-
-### History attributes
-
-`dh_audio_history_index` · `dh_audio_history_pos`
-
-Named-band outputs include `dh_audio_total`, `dh_audio_sub`, `dh_audio_bass`,
-`dh_audio_low_mid`, `dh_audio_mid`, `dh_audio_high_mids`,
-`dh_audio_presence`, `dh_audio_brilliance`, and `dh_audio_air`.
+The generator, tests, and documentation tools are development resources; end
+users only need the released Asset Library folder.
 
 ## Asset catalogs
 
-The generator writes stable catalog UUIDs to `blender_assets.cats.txt` and
-organizes assets under:
+Assets are cataloged under:
 
-```text
+~~~text
 Geometry Nodes / DH Audio / Analysis
 Geometry Nodes / DH Audio / Mapping
 Geometry Nodes / DH Audio / Query
 Geometry Nodes / DH Audio / Visualizers
 Geometry Nodes / DH Audio / Utilities
 DH Audio / Shaders
-```
+~~~
 
-Keep the catalog file beside the `.blend` when sharing or moving the asset
-library. The UUIDs are intended to remain stable across releases. The packaged
-folder is already arranged this way.
+Keep `blender_assets.cats.txt` beside the released `.blend` when moving an
+Asset Library. Its catalog UUIDs are intentionally stable.
 
 ## Design notes
 
 - Larger FFT sizes improve frequency precision but respond more slowly.
-- The stock ceiling is `0.8`; this avoids clipping ordinary mastered music.
-- Smooth curves use Catmull–Rom interpolation. Smooth + Resample produces an
-  evenly sampled curve for downstream modeling.
-- Temporal Response and Spectrum History use Simulation Zones. Play the timeline
-  sequentially or bake the simulation when complete history is required.
-- Spectrum Points and Spectrum Bars emit compatible point data for Curve and
-  Fill workflows.
-- Public groups intentionally hide repetitive internal attribute plumbing.
-
-## Further documentation
-
-- [Recipes and examples](docs/RECIPES.md)
-- [Quickstart](docs/BETA_QUICKSTART.md)
-- [Release notes](docs/RELEASE_NOTES_3.13.0.md)
-- [Source](src/dh_audio_toolkit.py)
-- [Regression tests](tests/blender_52_regression.py)
-- [Public-node preview capture](docs/NODE_PREVIEWS.md)
-
-## Roadmap ideas
-
-Potential extensions include radial bars, stereo named bands, rolling normalization, onset/beat triggers,
-frequency-based rotation, and standard shader color helpers.
+- The stock ceiling is `0.8`, avoiding clipping on ordinary mastered music.
+- Smooth curves use Catmull–Rom interpolation; Smooth + Resample produces
+  evenly sampled topology.
+- Public groups hide repetitive attribute plumbing; the public reference shows
+  only their intended exterior interfaces.
