@@ -101,6 +101,10 @@ HISTORY_ATTRIBUTES = (
     "dh_audio_history_pos",
 )
 
+TEMPORAL_ATTRIBUTES = (
+    "dh_audio_peak",
+)
+
 STEREO_ATTRIBUTES = (
     "dh_audio_channel",
     "dh_audio_channel_pos",
@@ -1529,7 +1533,10 @@ def _test_spectrum_history(report):
     surface_obj = build_host("DH Test Connected Waterfall", 4, surface=True)
     surface = {frame: _snapshot(surface_obj, frame) for frame in range(1, 5)}
     surface_attrs_ok = all(
-        all(name in snapshot["attributes"] for name in (*SPECTRUM_ATTRIBUTES, *HISTORY_ATTRIBUTES))
+        all(
+            name in snapshot["attributes"]
+            for name in (*SPECTRUM_ATTRIBUTES, *TEMPORAL_ATTRIBUTES, *HISTORY_ATTRIBUTES)
+        )
         for snapshot in surface.values()
     )
     surface_ok = (
@@ -1566,6 +1573,72 @@ def _test_spectrum_history(report):
         "varying_topology_vertex_counts": {frame: len(snapshot["vertices"]) for frame, snapshot in varying.items()},
         "surface_frame_4": {"vertices": len(surface[4]["vertices"]), "faces": surface[4]["faces"]},
         "timeline_requirement": "Play sequentially or bake/cache; an uncached forward jump advances one simulation step.",
+    }
+
+
+def _test_peak_hold_waterfall_recipe(report, sound):
+    """Verify the public, documented Analyzer → Temporal → History workflow."""
+    tree, _group_in, group_out = _new_geometry_tree("DH Recipe Peak Hold Waterfall")
+    analyzer = _group_node(tree, "DH Audio Analyzer")
+    _set_input(analyzer, "Sound", sound)
+    _set_input(analyzer, "Bands", 8)
+
+    temporal = _group_node(tree, "DH Audio Temporal Response")
+    _set_input(temporal, "Attack", 0.05)
+    _set_input(temporal, "Release", 0.25)
+    _set_input(temporal, "Peak Hold", True)
+    _set_input(temporal, "Peak Hold Time", 0.2)
+    _set_input(temporal, "Peak Decay", 0.5)
+
+    points = _group_node(tree, "DH Audio Spectrum Points")
+    _set_input(points, "Height", 3.0)
+    _set_input(points, "Center Spectrum", True)
+
+    history = _group_node(tree, "DH Audio Spectrum History")
+    _set_input(history, "Frames", 4)
+    _set_input(history, "History Offset", (0.0, -0.15, 0.0))
+    _set_input(history, "Surface", True)
+    _set_input(history, "Row Decimation", 1)
+
+    tree.links.new(_socket(analyzer.outputs, "Spectrum"), _socket(temporal.inputs, "Spectrum"))
+    tree.links.new(_socket(temporal.outputs, "Spectrum"), _socket(points.inputs, "Spectrum"))
+    tree.links.new(_socket(points.outputs, "Spectrum Points"), _socket(history.inputs, "Spectrum Points"))
+    tree.links.new(_socket(history.outputs, "Surface"), _socket(group_out.inputs, "Geometry"))
+
+    obj = _new_host("DH Recipe Peak Hold Waterfall Host", tree)
+    snapshots = {frame: _snapshot(obj, frame) for frame in range(1, 5)}
+    final = snapshots[4]
+    expected_attributes = {
+        *SPECTRUM_ATTRIBUTES,
+        *HISTORY_ATTRIBUTES,
+        *TEMPORAL_ATTRIBUTES,
+    }
+    report.check(
+        "Peak Hold Waterfall recipe connects a temporal spectrum to a surface",
+        (
+            len(final["vertices"]) == 32
+            and final["faces"] == 21
+            and expected_attributes.issubset(final["attributes"])
+        ),
+        {
+            "frame_4": {
+                "vertices": len(final["vertices"]),
+                "faces": final["faces"],
+                "attributes": sorted(final["attributes"]),
+            },
+            "connections": [
+                "Analyzer Spectrum -> Temporal Response Spectrum",
+                "Temporal Response Spectrum -> Spectrum Points Spectrum",
+                "Spectrum Points -> Spectrum History",
+                "Spectrum History Surface -> Group Output",
+            ],
+        },
+    )
+    report.observations["peak_hold_waterfall_recipe"] = {
+        "bands": 8,
+        "frames": 4,
+        "frame_4": {"vertices": len(final["vertices"]), "faces": final["faces"]},
+        "timeline_requirement": "Evaluate frames sequentially or bake/cache the Simulation Zones.",
     }
 
 
@@ -2560,6 +2633,10 @@ def run_validation(repo_root=None, release_path=None, report_path=None):
         report.section("Stereo Analyzer tests completed", lambda: _test_stereo_analyzer(report, sound))
         report.section("Temporal Response tests completed", lambda: _test_temporal_response(report))
         report.section("Spectrum History tests completed", lambda: _test_spectrum_history(report))
+        report.section(
+            "Peak Hold Waterfall recipe completed",
+            lambda: _test_peak_hold_waterfall_recipe(report, sound),
+        )
         report.section("Radial Spectrum tests completed", lambda: _test_radial_spectrum(report))
         report.section("Named-band tests completed", lambda: _test_bands(report, sound))
         report.section("Sample Range and Band Query tests completed", lambda: _test_sample_range_and_query(report, sound))

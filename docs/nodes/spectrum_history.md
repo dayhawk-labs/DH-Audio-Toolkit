@@ -6,7 +6,7 @@
 **Blender domain:** GeometryNodeTree<br>
 **Default node width:** 310 px
 
-Accumulate positioned spectrum points into a bounded waterfall history. Optionally generates a decimated connected quad surface, preserves spectrum attributes, supports changing band counts and reset, and exposes dh_audio_history_index / dh_audio_history_pos. Requires sequential timeline evaluation or a simulation bake for complete history.
+Accumulate positioned spectrum points into a bounded waterfall history. Optionally generates a decimated connected quad surface, preserves spectrum and temporal peak attributes, supports changing band counts and reset, and exposes dh_audio_history_index / dh_audio_history_pos. Requires sequential timeline evaluation or a simulation bake for complete history.
 
 ## Agent notes
 

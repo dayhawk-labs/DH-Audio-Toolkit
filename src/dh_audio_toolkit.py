@@ -2358,11 +2358,13 @@ def create_spectrum_history():
     link(tree, surface_grid, "Mesh", shape_surface, "Geometry")
     link(tree, sample_position, "Value", shape_surface, "Position")
 
-    # Retain the stable history and spectrum schema on the surface, so it can
-    # use the same material and downstream geometry consumers as History.
+    # Retain spectrum, temporal peak, and history schema on the surface, so it
+    # can use the same material and downstream geometry consumers as History.
     surface_geometry = shape_surface
     attr_x, attr_y = 2730, 230
-    for i, (_label, attr_name, data_type) in enumerate((*SPECTRUM_ATTRS, *HISTORY_ATTRS)):
+    for i, (_label, attr_name, data_type) in enumerate(
+        (*SPECTRUM_ATTRS, *TEMPORAL_ATTRS, *HISTORY_ATTRS)
+    ):
         attr = named_attribute_node(
             nodes, attr_name, data_type,
             location=(attr_x, attr_y - i * 145), label=f"Surface {attr_name}",
@@ -2403,7 +2405,7 @@ def create_spectrum_history():
         tree,
         "Accumulate positioned spectrum points into a bounded waterfall history. "
         "Optionally generates a decimated connected quad surface, preserves spectrum "
-        "attributes, supports changing band counts and reset, and exposes "
+        "and temporal peak attributes, supports changing band counts and reset, and exposes "
         "dh_audio_history_index / dh_audio_history_pos. Requires "
         "sequential timeline evaluation or a simulation bake for complete history."
     )

@@ -3,6 +3,13 @@
 Practical node-graph patterns for Blender 5.2+. Each recipe assumes the DH
 Audio node groups have been generated and loaded into the current file.
 
+## Featured, verified recipe
+
+[**Peak-Hold Waterfall Surface**](recipes/peak_hold_waterfall.md) is the
+complete reference build: Analyzer → Temporal Response → Spectrum Points →
+Spectrum History Surface, with verified links, sensible values, a peak-aware
+material option, and topology checks in the Blender regression suite.
+
 ## Quick chooser
 
 | Goal | Start with |
@@ -63,7 +70,7 @@ Defaults are Attack `0.05` seconds and Release `0.25` seconds. Set either to
 zero for an immediate response in that direction. This group uses a Simulation
 Zone, so play the timeline sequentially or bake it for complete history.
 
-The collapsed **Peak Hold** panel is enabled by default. It holds each band's
+The **Peak Hold** panel is open and enabled by default. It holds each band's
 smoothed peak for `0.20` seconds, then decays it exponentially toward the live
 amplitude over `0.50` seconds. Use the **Peak** output or `dh_audio_peak` for a
 separate marker; **Amplitude** and `dh_audio_amp` remain the live value. Turn
@@ -77,7 +84,7 @@ DH Audio Analyzer → DH Audio Spectrum Points → DH Audio Spectrum History
 
 Spectrum Bars can also feed Spectrum History directly. Defaults are Frames
 `32` and History Offset `(0, -0.15, 0)`. **History** contains separate mesh
-rows. Enable the collapsed **Surface** panel to emit a connected quad waterfall
+rows. Enable the open **Surface** panel to emit a connected quad waterfall
 from the matching **Surface** output. Start with Row Decimation `1`; increase
 it only when a long history needs fewer rows. Surface is disabled by default,
 so existing row workflows are unchanged. Reset discards previous rows in one

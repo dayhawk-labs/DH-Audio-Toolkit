@@ -27,6 +27,8 @@ then visualize, deform, query, or read them in materials.
 
 The [asset-library installation guide](docs/ASSET_LIBRARY_INSTALL.md) has the
 full Blender setup. The [recipe guide](docs/RECIPES.md) has complete workflows.
+For a complete stateful build, start with the
+[Peak-Hold Waterfall Surface recipe](docs/recipes/peak_hold_waterfall.md).
 
 ## Choose a workflow
 

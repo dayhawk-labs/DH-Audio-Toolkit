@@ -42,10 +42,10 @@ jobs:
         run: python tools/check_consistency.py
 
       - name: Run checker tests
-        run: python -m pytest -q tests/test_check_consistency.py tests/test_check_release_package.py tests/test_public_node_reference.py
+        run: python -m pytest -q tests/test_check_consistency.py tests/test_check_release_package.py tests/test_public_node_reference.py tests/test_peak_hold_waterfall_recipe.py
 
       - name: Compile Python sources
-        run: python -m py_compile src/dh_audio_toolkit.py tests/blender_52_regression.py tools/check_consistency.py tools/check_release_package.py tools/export_public_node_interfaces.py tools/build_public_node_reference.py tests/test_check_consistency.py tests/test_check_release_package.py tests/test_public_node_reference.py
+        run: python -m py_compile src/dh_audio_toolkit.py tests/blender_52_regression.py tools/check_consistency.py tools/check_release_package.py tools/export_public_node_interfaces.py tools/build_public_node_reference.py tests/test_check_consistency.py tests/test_check_release_package.py tests/test_public_node_reference.py tests/test_peak_hold_waterfall_recipe.py
 
   blender:
     name: Blender 5.2 regression (optional)
