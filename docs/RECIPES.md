@@ -10,11 +10,14 @@ complete reference build: Analyzer → Temporal Response → Spectrum Points →
 Spectrum History Surface, with verified links, sensible values, a peak-aware
 material option, and topology checks in the Blender regression suite.
 
+[**Spectrum Bars: First Result**](recipes/spectrum_bars_first_result.md) is the
+shortest path from a Sound datablock to a visible audio-reactive result.
+
 ## Quick chooser
 
 | Goal | Start with |
 | --- | --- |
-| Fastest first result | **Spectrum Bars** |
+| Fastest first result | [**Spectrum Bars**](recipes/spectrum_bars_first_result.md) |
 | A reusable audio graph | **Analyzer → Spectrum Points** |
 | A custom visualizer | **Analyzer → Spectrum Instances** |
 | A single reactive value | **Band Query** or **Sample Range** |
