@@ -11,9 +11,12 @@ a Sound datablock to the Analyzer node after opening it, then play from frame 1.
 from __future__ import annotations
 
 import argparse
+import math
 from pathlib import Path
 import runpy
 import sys
+import tempfile
+import wave
 
 import bpy
 
@@ -54,6 +57,86 @@ def frame(tree, label, location, size):
     return item
 
 
+def make_demo_sound():
+    """Create and pack a tiny synthetic sound so the demo is immediately playable."""
+    sample_rate = 44100
+    duration = 4.0
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as handle:
+        wav_path = Path(handle.name)
+    try:
+        with wave.open(str(wav_path), "wb") as wav:
+            wav.setnchannels(1)
+            wav.setsampwidth(2)
+            wav.setframerate(sample_rate)
+            frames = bytearray()
+            for index in range(int(sample_rate * duration)):
+                time = index / sample_rate
+                sweep = 180.0 + 700.0 * time / duration
+                value = 0.35 * math.sin(2.0 * math.pi * sweep * time)
+                value += 0.15 * math.sin(2.0 * math.pi * (sweep * 2.01) * time)
+                frames.extend(int(max(-1.0, min(1.0, value)) * 32767).to_bytes(2, "little", signed=True))
+            wav.writeframes(frames)
+        sound = bpy.data.sounds.load(str(wav_path), check_existing=False)
+        sound.name = "DH Demo - Synthetic Sweep (packed)"
+        sound.pack()
+        return sound
+    finally:
+        wav_path.unlink(missing_ok=True)
+
+
+def make_showcase(scene):
+    mesh = bpy.data.meshes.new("DH Demo Waterfall Preview Mesh")
+    verts = []
+    faces = []
+    rows, cols = 18, 48
+    for row in range(rows):
+        y = (row - (rows - 1) / 2) * 0.22
+        for col in range(cols):
+            x = (col - (cols - 1) / 2) * 0.16
+            amp = 0.35 + 0.22 * math.sin(col * 0.35 + row * 0.4) + 0.12 * math.sin(col * 0.9)
+            verts.append((x, y, max(0.03, amp)))
+    for row in range(rows - 1):
+        for col in range(cols - 1):
+            base = row * cols + col
+            faces.append((base, base + 1, base + cols + 1, base + cols))
+    mesh.from_pydata(verts, [], faces)
+    mesh.update()
+    preview = bpy.data.objects.new("DH Demo - Waterfall Preview", mesh)
+    scene.collection.objects.link(preview)
+    material = bpy.data.materials.new("DH Demo - Peak Emission")
+    material.diffuse_color = (0.04, 0.28, 0.8, 1.0)
+    material.metallic = 0.15
+    material.roughness = 0.28
+    preview.data.materials.append(material)
+    bevel = preview.modifiers.new("Soft edges", "BEVEL")
+    bevel.width = 0.025
+    bevel.segments = 2
+
+    camera_data = bpy.data.cameras.new("DH Demo Camera")
+    camera = bpy.data.objects.new("DH Demo Camera", camera_data)
+    scene.collection.objects.link(camera)
+    camera.location = (0.0, -5.8, 3.8)
+    camera.rotation_euler = (math.radians(58), 0.0, 0.0)
+    camera_data.lens = 52
+    scene.camera = camera
+    for name, location, energy, size in (
+        ("DH Demo Key", (2.5, -3.0, 5.0), 900, 4.0),
+        ("DH Demo Fill", (-3.0, -1.0, 2.5), 500, 3.0),
+    ):
+        light_data = bpy.data.lights.new(name, "AREA")
+        light_data.energy = energy
+        light_data.shape = "DISK"
+        light_data.size = size
+        light = bpy.data.objects.new(name, light_data)
+        light.location = location
+        scene.collection.objects.link(light)
+    scene.render.engine = "BLENDER_EEVEE_NEXT"
+    scene.render.resolution_x = 900
+    scene.render.resolution_y = 600
+    scene.render.resolution_percentage = 100
+    scene.render.filepath = "//DH Demo Waterfall Preview.png"
+
+
 def main():
     options = args()
     repo = Path(__file__).resolve().parents[1]
@@ -67,6 +150,7 @@ def main():
     output.location = (1050, -40)
 
     analyzer = group_node(tree, "DH Audio Analyzer", "1  ANALYZE AUDIO", (-1050, 0))
+    analyzer.inputs["Sound"].default_value = make_demo_sound()
     set_input(analyzer, "Bands", 8)
     temporal = group_node(tree, "DH Audio Temporal Response", "2  SMOOTH + PEAK", (-650, 0))
     set_input(temporal, "Attack", 0.05)
@@ -98,7 +182,7 @@ def main():
 
     text = bpy.data.texts.new("Peak-Hold Waterfall - How To Use")
     text.write("DH AUDIO TOOLKIT - PEAK-HOLD WATERFALL\n\n")
-    text.write("Assign a Sound datablock to the Analyzer node, then play from frame 1.\n")
+    text.write("A packed synthetic sweep is assigned to Analyzer.Sound; replace it with your own Sound if desired.\n")
     text.write("The graph is intentionally small: 8 bands x 4 retained rows = 32 vertices / 21 quads.\n\n")
     text.write("Temporal Response keeps live dh_audio_amp and adds dh_audio_peak.\n")
     text.write("Spectrum History Surface preserves both attributes plus history metadata.\n")
@@ -116,7 +200,8 @@ def main():
     tree["dh_demo_id"] = "peak_hold_waterfall"
     tree["dh_demo_expected_topology"] = "8 bands x 4 rows = 32 vertices, 21 quad faces"
     tree["dh_demo_workflow"] = "Analyzer -> Temporal Response -> Spectrum Points -> Spectrum History Surface"
-    obj["dh_demo_notes"] = "Assign Sound, play sequentially from frame 1, then inspect Surface and peak attributes."
+    obj["dh_demo_notes"] = "Packed synthetic Sound is assigned. Replace it if desired, play sequentially from frame 1, then inspect Surface and peak attributes."
+    make_showcase(scene)
 
     options.output.parent.mkdir(parents=True, exist_ok=True)
     bpy.ops.wm.save_as_mainfile(filepath=str(options.output), check_existing=False)

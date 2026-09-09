@@ -14,6 +14,9 @@ def test_demo_is_reproducible_and_uses_the_verified_public_chain():
         'socket(history.outputs, "Surface")',
         '"dh_demo_id"',
         '"peak_hold_waterfall"',
+        'make_demo_sound()',
+        'make_showcase(scene)',
+        'sound.pack()',
     )
     assert all(fragment in source for fragment in expected)
     assert "--output" in source
